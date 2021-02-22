@@ -29,6 +29,7 @@ Imports:
     dplyr,
     janitor,
     targets,
-    fingertipsR
+    fingertipsR,
+    stringr
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5
