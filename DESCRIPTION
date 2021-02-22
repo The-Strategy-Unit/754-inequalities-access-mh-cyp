@@ -19,7 +19,7 @@ Authors@R: c(
            role = "cph",
            email = "strategy.unit@nhs.net")
     )
-Description: Project to look at the inequalities to access to mental health services for children and young people
+Description: Project to look at the inequalities to access to mental health services for children and young people.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
