@@ -18,5 +18,6 @@ devtools::load_all()
 
 # End this file with a list of target objects.
 list(
-  tar_target(fingertips_data, get_fingertips_data())
+  tar_target(fingertips_data, get_fingertips_data()),
+  tar_target(stp_lookups, get_stp_lookups())
 )
