@@ -1,3 +1,5 @@
 ^LICENSE\.md$
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^_targets.R$
+^_targets$
