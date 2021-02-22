@@ -1,0 +1,34 @@
+Package: InequalitiesAccessMHCYP
+Title: Inequalities in Access to Mental Health for Children and Young People
+Version: 0.0.0.9000
+Authors@R: c(
+    person(given = "Tom",
+           family = "Jemmett",
+           role = c("aut", "cre"),
+           email = "thomas.jemmett@nhs.net",
+           comment = c(ORCID = "0000-0002-6943-2990")),
+    person(given = "Alex",
+           family = "Lawless",
+           role = c("aut"),
+           email = "alexander.lawless1@nhs.net"),
+    person(given = "Andy",
+           family = "Hood",
+           role = c("aut"),
+           email = "andrewhood@nhs.net"),
+    person(given = "The Strategy Unit",
+           role = "cph",
+           email = "strategy.unit@nhs.net")
+    )
+Description: Project to look at the inequalities to access to mental health services for children and young people
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Imports:
+    dplyr,
+    janitor,
+    targets,
+    fingertipsR
+Remotes:
+    github::rOpenSci/fingertipsR@v1.0.5
