@@ -17,6 +17,8 @@ check()
 tar_edit()
 
 # re-run the targets ----
+# optionally, add this step in to watch changes as they happen in browser
+# tar_watch(seconds = 10, outdated = FALSE, targets_only = TRUE)
 tar_make()
 
 # visualise the targets ----
