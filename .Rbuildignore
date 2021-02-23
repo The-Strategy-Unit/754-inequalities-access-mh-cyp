@@ -3,3 +3,4 @@
 ^\.Rproj\.user$
 ^_targets.R$
 ^_targets$
+^targets_helpers.R$
