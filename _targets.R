@@ -16,6 +16,8 @@ library(targets)
 devtools::document()
 devtools::load_all()
 
+check_for_issues()
+
 # End this file with a list of target objects.
 list(
   tar_target(fingertips_data, get_fingertips_data()),

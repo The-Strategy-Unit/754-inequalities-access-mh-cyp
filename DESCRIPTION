@@ -33,7 +33,9 @@ Imports:
     readr,
     rlang,
     stringr,
-    targets
+    targets,
+    crayon,
+    curl
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5
     github::nhs-r-community/NHSRtools
