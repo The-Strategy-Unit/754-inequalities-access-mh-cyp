@@ -7,9 +7,11 @@
 #'
 #' @export
 get_ccg_successors <- function() {
+  # load list off ccg's, keep only true ccg's (drops commissioning hubs)
   ccgs <- NHSRtools::ods_get_ccgs() %>%
     dplyr::filter(stringr::str_ends(name, "CCG"))
 
+  # load ccg successors, make sure to filter both the old and new code columns
   successors <- NHSRtools::ods_get_successors() %>%
     dplyr::semi_join(ccgs, by = c("old_code" = "org_id")) %>%
     dplyr::semi_join(ccgs, by = c("new_code" = "org_id")) %>%
