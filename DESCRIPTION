@@ -27,9 +27,13 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
 Imports:
     dplyr,
-    janitor,
-    targets,
     fingertipsR,
-    stringr
+    janitor,
+    NHSRtools,
+    readr,
+    rlang,
+    stringr,
+    targets
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5
+    github::nhs-r-community/NHSRtools
