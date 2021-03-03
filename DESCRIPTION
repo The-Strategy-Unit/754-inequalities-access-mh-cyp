@@ -1,6 +1,6 @@
 Package: InequalitiesAccessMHCYP
 Title: Inequalities in Access to Mental Health for Children and Young People
-Version: 0.0.0.9000
+Version: 0.0.0.9001
 Authors@R: c(
     person(given = "Tom",
            family = "Jemmett",
@@ -35,7 +35,9 @@ Imports:
     stringr,
     targets,
     crayon,
-    curl
+    curl,
+    utils,
+    withr
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5, 
     github::nhs-r-community/NHSRtools@main

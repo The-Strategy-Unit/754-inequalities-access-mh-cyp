@@ -3,6 +3,7 @@
 export(get_ccg_gss_to_ods)
 export(get_ccg_successors)
 export(get_fingertips_data)
+export(get_lad_successors)
 export(get_stp_lookups)
 importFrom(dplyr,"%>%")
 importFrom(rlang,.data)
