@@ -13,14 +13,14 @@ get_ccg_gss_to_ods <- function() {
   chd_csv <- file.path(tmp_dir, "Equivalents_V2.csv")
 
   withr::with_file(chd_zip, {
-    download.file(chd_url, chd_zip, mode = "wb")
+    utils::download.file(chd_url, chd_zip, mode = "wb")
     withr::with_file(chd_csv, {
-      unzip(chd_zip, files = "Equivalents_V2.csv", exdir = tmp_dir)
+      utils::unzip(chd_zip, files = "Equivalents_V2.csv", exdir = tmp_dir)
       chd <- readr::read_csv(chd_csv, col_types = readr::cols(.default = readr::col_character()))
     })
   })
 
   chd %>%
-    dplyr::filter(ENTITYCD == "E38") %>%
-    dplyr::distinct(ccgcd = GEOGCD, ccgcdh = GEOGCDH)
+    dplyr::filter(.data$ENTITYCD == "E38") %>%
+    dplyr::distinct(ccgcd = .data$GEOGCD, ccgcdh = .data$GEOGCDH)
 }
