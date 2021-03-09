@@ -23,5 +23,6 @@ list(
   tar_target(fingertips_data, get_fingertips_data()),
   tar_target(stp_lookups, get_stp_lookups()),
   tar_target(ccg_successors, get_ccg_successors()),
-  tar_target(ccg_gss_to_ods, get_ccg_gss_to_ods())
+  tar_target(ccg_gss_to_ods, get_ccg_gss_to_ods()),
+  tar_target(stp_nhs_region_lookups, get_stp_nhs_region_lookups())
 )
