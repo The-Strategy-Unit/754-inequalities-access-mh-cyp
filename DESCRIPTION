@@ -37,7 +37,11 @@ Imports:
     crayon,
     curl,
     utils,
-    withr
+    withr,
+    DBI,
+    odbc,
+    tidyr,
+    forcats
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5, 
     github::nhs-r-community/NHSRtools@main
