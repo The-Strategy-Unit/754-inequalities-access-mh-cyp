@@ -6,6 +6,7 @@ NULL
 #' Check for Issues
 #'
 #' Helper function to verify that there are no issues that will prevent any of the code in this project running.
+#' @export
 check_for_issues <- function() {
   errors_encountered <- vector("list", 100)
   error_ctr <- 0
