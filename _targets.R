@@ -21,10 +21,14 @@ list(
   tar_target(ccg_gss_to_ods, get_ccg_gss_to_ods()),
   tar_target(lad_successors, get_lad_successors(stp_lookups)),
   tar_target(imd, get_imd()),
-  tar_target(last_edit_cypmh,
-             "last_update_cypmh.txt",
-             format = "file"),
+  tar_target(last_edit_cypmh, "ref/last_update_cypmh.txt", format = "file"),
+  tar_target(ethnicity_file, "ref/ethnicity.csv", format = "file"),
+  tar_target(ethnicity, readr::read_csv(ethnicity_file, col_types = "cc")),
+  tar_target(source_referral_file, "ref/source_referral.csv", format = "file"),
+  tar_target(source_referral, readr::read_csv(source_referral_file, col_types = "cc")),
   tar_target(cypmh, get_cypmh(Sys.getenv("CON_STR"),
                               Sys.getenv("CYPMH_TABLE_NAME"),
+                              ethnicity,
+                              source_referral,
                               last_edit_cypmh))
 )

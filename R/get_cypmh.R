@@ -1,65 +1,30 @@
 #' Get CYPMH
 #'
-#' Get's the Childrens and Young Persons Mental Health Dataset from the MLCSU datawarehouse
+#' Gets the Children's and Young Persons Mental Health Dataset from the MLCSU datawarehouse
 #'
 #' @param con_str the connection string
 #' @param table_name the table name
+#' @param ethnicity tibble containing columns ethnic_code and ethnicity, to remap
+#' @param source_referral tibble containing columns source_ref_code and source_referral, to remap
+#' @param last_update_cypmh results of last_update_cypmh.txt ref file
 #'
 #' @return a tibble
 #'
 #' @export
-get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
+get_cypmh <- function(con_str,
+                      table_name,
+                      ethnicity,
+                      source_referral,
+                      last_update_cypmh = Sys.time()) {
   force(last_update_cypmh) # allows data to be reloaded without target changing
 
   con <- DBI::dbConnect(odbc::odbc(), .connection_string = con_str, timeout = 10)
   withr::defer( DBI::dbDisconnect(con) )
 
-  ethnicity <- tribble(
-    ~ethnic_code, ~ethnicity,
-    "A", "White",
-    "B", "White",
-    "C", "White",
-    "D", "Mixed",
-    "E", "Mixed",
-    "F", "Mixed",
-    "G", "Mixed",
-    "H", "Asian",
-    "J", "Asian",
-    "K", "Asian",
-    "L", "Asian",
-    "M", "Black",
-    "N", "Black",
-    "P", "Black",
-    "R", "Other",
-    "S", "Other"
-  )
-
-  source_referral <- tribble(
-    ~source_ref_code, ~source_referral,
-    "00", "GP",
-    "01", "Self/Non-Medical",
-    "02", "Self/Non-Medical",
-    "04", "Self/Non-Medical",
-    "05", "Self/Non-Medical",
-    "08", "Self/Non-Medical",
-    "07", "AE/Other clinical specialty",
-    "03", "AE/Other clinical specialty",
-    "06", "Police/Courts",
-    "09", "Police/Courts",
-    "10", "Police/Courts",
-    "11", "Mental Health",
-    "12", "Mental Health",
-    "20", "Mental Health",
-    "21", "Mental Health",
-    "22", "Mental Health",
-    "13", "Not Known",
-    "99", "Not Known"
-  )
-
   dplyr::tbl(con, table_name) %>%
     dplyr::filter(.data$`Death<10yrs` == 0) %>%
     dplyr::transmute(
-      lsoa = LSOA_of_residence,
+      lsoa = .data$LSOA_of_residence,
       gender = .data$MHD_Gender,
       age = as.numeric(.data$MHD_Age_Start_Reporting_Period),
       has_diagnosis = as.logical(.data$DiagnosisRecord),
@@ -84,10 +49,10 @@ get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
       con_physiotherapist = as.numeric(.data$MHD_Contacts_Physiotherapist),
       con_consultant_pscycotherapy = as.numeric(.data$MHD_Contacts_Consultant_Psycotherapy),
       con_contacts_social_worker = as.numeric(.data$MHD_Contacts_Social_Worker),
-      social_worker = as.logical(MHD_Social_Worker_Involvement),
+      social_worker = as.logical(.data$MHD_Social_Worker_Involvement),
       admissions = as.numeric(.data$MHD_Admissions),
       days_prior = .data$DaysPrior,
-      age_first_contact = as.numeric(AgeFirstContact_der2),
+      age_first_contact = as.numeric(.data$AgeFirstContact_der2),
       el_spells = .data$`EL Spells`,
       nel_spells = .data$`NEL Spells`,
       ae_attends = .data$`AE attends`,
@@ -110,7 +75,7 @@ get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
     ) %>%
     dplyr::mutate(
       dplyr::across(
-        .data$ethnicity,
+        .data$ethnic_code,
         stringr::str_trim
       ),
       dplyr::across(
@@ -119,7 +84,7 @@ get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
         0
       ),
       dplyr::across(
-        c(.data$source_referral, .data$employment_status, .data$accomodation_status),
+        c(.data$source_ref_code, .data$employment_status, .data$accomodation_status),
         tidyr::replace_na,
         "99"
       ),
@@ -132,9 +97,9 @@ get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
       dplyr::across(.data$ethnic_code, stringr::str_sub, 1, 1)
     ) %>%
     dplyr::select(-.data$gender, -.data$util_class) %>%
-    dplyr::left_join(.data$ethnicity, by = "ethnic_code") %>%
-    dplyr::left_join(.data$source_referral, by = "source_ref_code") %>%
-    dplyr::select(-ethnic_code, -source_ref_code) %>%
+    dplyr::left_join(ethnicity, by = "ethnic_code") %>%
+    dplyr::left_join(source_referral, by = "source_ref_code") %>%
+    dplyr::select(-.data$ethnic_code, -.data$source_ref_code) %>%
     dplyr::mutate(dplyr::across(ethnicity, tidyr::replace_na, "Unknown")) %>%
     dplyr::mutate(accomodation_status = dplyr::case_when(
       accomodation_status == "OC" ~ "99",

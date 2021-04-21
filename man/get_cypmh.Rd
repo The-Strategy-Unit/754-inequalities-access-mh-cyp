@@ -4,16 +4,28 @@
 \alias{get_cypmh}
 \title{Get CYPMH}
 \usage{
-get_cypmh(con_str, table_name)
+get_cypmh(
+  con_str,
+  table_name,
+  ethnicity,
+  source_referral,
+  last_update_cypmh = Sys.time()
+)
 }
 \arguments{
 \item{con_str}{the connection string}
 
 \item{table_name}{the table name}
+
+\item{ethnicity}{tibble containing columns ethnic_code and ethnicity, to remap}
+
+\item{source_referral}{tibble containing columns source_ref_code and source_referral, to remap}
+
+\item{last_update_cypmh}{results of last_update_cypmh.txt ref file}
 }
 \value{
 a tibble
 }
 \description{
-Get's the Childrens and Young Persons Mental Health Dataset from the MLCSU datawarehouse
+Gets the Children's and Young Persons Mental Health Dataset from the MLCSU datawarehouse
 }
