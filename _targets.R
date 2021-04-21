@@ -20,6 +20,7 @@ list(
   tar_target(ccg_successors, get_ccg_successors()),
   tar_target(ccg_gss_to_ods, get_ccg_gss_to_ods()),
   tar_target(lad_successors, get_lad_successors(stp_lookups)),
+  tar_target(imd, get_imd()),
   tar_target(cypmh, get_cypmh(Sys.getenv("CON_STR"),
                               Sys.getenv("CYPMH_TABLE_NAME")))
 )
