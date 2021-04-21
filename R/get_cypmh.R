@@ -8,20 +8,66 @@
 #' @return a tibble
 #'
 #' @export
-get_cypmh <- function(con_str, table_name) {
-  con <- DBI::dbConnect(odbc::odbc(), .connection_string = con_str, timeout = 10)
+get_cypmh <- function(con_str, table_name, last_update_cypmh = Sys.time()) {
+  force(last_update_cypmh) # allows data to be reloaded without target changing
 
+  con <- DBI::dbConnect(odbc::odbc(), .connection_string = con_str, timeout = 10)
   withr::defer( DBI::dbDisconnect(con) )
+
+  ethnicity <- tribble(
+    ~ethnic_code, ~ethnicity,
+    "A", "White",
+    "B", "White",
+    "C", "White",
+    "D", "Mixed",
+    "E", "Mixed",
+    "F", "Mixed",
+    "G", "Mixed",
+    "H", "Asian",
+    "J", "Asian",
+    "K", "Asian",
+    "L", "Asian",
+    "M", "Black",
+    "N", "Black",
+    "P", "Black",
+    "R", "Other",
+    "S", "Other"
+  )
+
+  source_referral <- tribble(
+    ~source_ref_code, ~source_referral,
+    "00", "GP",
+    "01", "Self/Non-Medical",
+    "02", "Self/Non-Medical",
+    "04", "Self/Non-Medical",
+    "05", "Self/Non-Medical",
+    "08", "Self/Non-Medical",
+    "07", "AE/Other clinical specialty",
+    "03", "AE/Other clinical specialty",
+    "06", "Police/Courts",
+    "09", "Police/Courts",
+    "10", "Police/Courts",
+    "11", "Mental Health",
+    "12", "Mental Health",
+    "20", "Mental Health",
+    "21", "Mental Health",
+    "22", "Mental Health",
+    "13", "Not Known",
+    "99", "Not Known"
+  )
 
   dplyr::tbl(con, table_name) %>%
     dplyr::filter(.data$`Death<10yrs` == 0) %>%
     dplyr::transmute(
+      lsoa = LSOA_of_residence,
       gender = .data$MHD_Gender,
       age = as.numeric(.data$MHD_Age_Start_Reporting_Period),
       has_diagnosis = as.logical(.data$DiagnosisRecord),
       marital_status = .data$MHD_Marital_Status,
-      ethnicity = stringr::str_trim(.data$MHD_Ethnicity),
-      #source_referral = MHD_Source_of_Referral,
+      ethnic_code = .data$MHD_Ethnicity_der,
+      source_ref_code = .data$MHD_Source_of_Referral,
+      employment_status = .data$MHD_Employment_Status,
+      accomodation_status = .data$MHD_Accomodation_Status_2,
       spell_days = as.numeric(.data$MHD_Spell_Days_in_Reporting_Period),
       cpa_standard_days = as.numeric(.data$MHD_CPA_Standard_Days),
       cpa_enhanced_days = as.numeric(.data$MHD_CPA_Enhanced_Days),
@@ -38,9 +84,13 @@ get_cypmh <- function(con_str, table_name) {
       con_physiotherapist = as.numeric(.data$MHD_Contacts_Physiotherapist),
       con_consultant_pscycotherapy = as.numeric(.data$MHD_Contacts_Consultant_Psycotherapy),
       con_contacts_social_worker = as.numeric(.data$MHD_Contacts_Social_Worker),
-      # ignoring due to con_contacts_social_worker
-      #social_worker = as.logical(.data$MHD_Social_Worker_Involvement),
+      social_worker = as.logical(MHD_Social_Worker_Involvement),
       admissions = as.numeric(.data$MHD_Admissions),
+      days_prior = .data$DaysPrior,
+      age_first_contact = as.numeric(AgeFirstContact_der2),
+      el_spells = .data$`EL Spells`,
+      nel_spells = .data$`NEL Spells`,
+      ae_attends = .data$`AE attends`,
       contact_y1 = as.logical(.data$ContactY1),
       contact_y2 = as.logical(.data$ContactY2),
       contact_y3 = as.logical(.data$ContactY3),
@@ -51,30 +101,43 @@ get_cypmh <- function(con_str, table_name) {
       contact_y8 = as.logical(.data$ContactY8),
       contact_y9 = as.logical(.data$ContactY9),
       contact_y10 = as.logical(.data$ContactY10),
-      days_prior = .data$DaysPrior,
-      el_spells = .data$`EL Spells`,
-      nel_spells = .data$`NEL Spells`,
-      ae_attends = .data$`AE attends`,
       util_class = .data$UtilClass,
       util_description = .data$UtilDescription
     ) %>%
     dplyr::collect() %>%
     dplyr::filter(
-      .data$gender %in% c("1", "2"), # only complete genders
-      .data$age < 24                 # other ages well represented - should we drop 17 too?
+      .data$gender %in% c("1", "2") # only complete genders
     ) %>%
     dplyr::mutate(
+      dplyr::across(
+        .data$ethnicity,
+        stringr::str_trim
+      ),
       dplyr::across(
         c(.data$el_spells, .data$nel_spells, .data$ae_attends),
         tidyr::replace_na,
         0
       ),
       dplyr::across(
+        c(.data$source_referral, .data$employment_status, .data$accomodation_status),
+        tidyr::replace_na,
+        "99"
+      ),
+      dplyr::across(
         .data$util_description,
         forcats::fct_reorder,
         .data$util_class
       ),
-      is_male = ifelse(.data$gender == "1", 1, 0)
+      is_male = ifelse(.data$gender == "1", 1, 0),
+      dplyr::across(.data$ethnic_code, stringr::str_sub, 1, 1)
     ) %>%
-    dplyr::select(-.data$gender, -.data$util_class)
+    dplyr::select(-.data$gender, -.data$util_class) %>%
+    dplyr::left_join(.data$ethnicity, by = "ethnic_code") %>%
+    dplyr::left_join(.data$source_referral, by = "source_ref_code") %>%
+    dplyr::select(-ethnic_code, -source_ref_code) %>%
+    dplyr::mutate(dplyr::across(ethnicity, tidyr::replace_na, "Unknown")) %>%
+    dplyr::mutate(accomodation_status = dplyr::case_when(
+      accomodation_status == "OC" ~ "99",
+      TRUE ~ accomodation_status
+    ))
 }
