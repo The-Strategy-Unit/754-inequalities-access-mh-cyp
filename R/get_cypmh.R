@@ -74,10 +74,7 @@ get_cypmh <- function(con_str,
       .data$gender %in% c("1", "2") # only complete genders
     ) %>%
     dplyr::mutate(
-      dplyr::across(
-        .data$ethnic_code,
-        stringr::str_trim
-      ),
+      dplyr::across(.data$ethnic_code, stringr::str_trim),
       dplyr::across(
         c(.data$el_spells, .data$nel_spells, .data$ae_attends),
         tidyr::replace_na,
@@ -94,7 +91,7 @@ get_cypmh <- function(con_str,
         .data$util_class
       ),
       is_male = ifelse(.data$gender == "1", 1, 0),
-      dplyr::across(.data$ethnic_code, stringr::str_sub, 1, 1)
+      dplyr::across(c(.data$ethnic_code, .data$employment_status), stringr::str_sub, 1, 1)
     ) %>%
     dplyr::select(-.data$gender, -.data$util_class) %>%
     dplyr::left_join(ethnicity, by = "ethnic_code") %>%
