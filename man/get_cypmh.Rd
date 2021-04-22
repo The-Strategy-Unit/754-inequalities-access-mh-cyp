@@ -7,6 +7,7 @@
 get_cypmh(
   con_str,
   table_name,
+  imd,
   ethnicity,
   source_referral,
   last_update_cypmh = Sys.time()
@@ -16,6 +17,8 @@ get_cypmh(
 \item{con_str}{the connection string}
 
 \item{table_name}{the table name}
+
+\item{imd}{tibble containing columns lsoa and imd}
 
 \item{ethnicity}{tibble containing columns ethnic_code and ethnicity, to remap}
 
