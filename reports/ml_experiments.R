@@ -6,36 +6,59 @@ library(fastDummies)
 library(caret)
 library(keras)
 
-group_nest_as_list <- function(.data, group) {
-  x <- group_nest(.data, {{ group }})
+split_data <- function(.data, response, seed = 20211340) {
+  set.seed(seed)
 
-  set_names(x[[2]], x[[1]])
+  split <- base::sample(
+    1:3,
+    nrow(data),
+    TRUE,
+    c(.6, .2, .2)
+  )
+
+  purrr::map(
+    c("train" = 1, "test" = 2, "validation" = 3),
+    ~list(
+      data = .data %>%
+        slice(which(split == .x)) %>%
+        select(-{{ response }}),
+      response = .data %>%
+        pull({{ response }})
+    )
+  )
 }
 
-set.seed(20211340)
-
 cypmh <- targets::tar_read(cypmh) %>%
-  mutate(split = base::sample(c("train", "test", "validate"),
-                              n(),
-                              TRUE,
-                              c(.6, .2, .2)),
-         across(where(is.logical), as.numeric)) %>%
   select(-starts_with("contact_")) %>%
-  dummy_cols(c("marital_status",
-               "employment_status",
-               "accomodation_status",
-               "ethnicity",
-               "source_referral"),
-             remove_most_frequent_dummy = TRUE,
-             remove_selected_columns = TRUE) %>%
-  mutate(across(util_description,
-                fct_recode,
-                "Low needs" = "Occasional support",
-                "High needs" = "Persistent problems",
-                "High needs" = "Chronic or complex")) %>%
-  group_nest_as_list(split) %>%
-  map(~list(response = .x$util_description,
-            data = select(.x, -util_description)))
+  split_cypmh(util_description)
+  # mutate(across(util_description,
+  #               fct_recode,
+  #               "Low needs" = "Occasional support",
+  #               "High needs" = "Persistent problems",
+  #               "High needs" = "Chronic or complex"))
+
+rec <- cypmh$train$data %>%
+  recipes::recipe() %>%
+  recipes::update_role(everything(), new_role = "predictor") %>%
+  recipes::step_scale(where(is.numeric), -imd) %>%
+  recipes::step_mutate_at(imd, fn = ~.x / 10) %>%
+  recipes::step_mutate_at(where(is.logical), fn = as.numeric) %>%
+  recipes::step_dummy(where(is.factor)) %>%
+  recipes::prep()
+
+recipes::bake(rec, new_data = NULL)
+
+map(cypmh,
+    modify_at,
+    "data",
+    dummy_cols,
+    c("marital_status",
+      "employment_status",
+      "accomodation_status",
+      "ethnicity",
+      "source_referral"),
+    remove_most_frequent_dummy = TRUE,
+    remove_selected_columns = TRUE)
 
 cypmh_weights <- table(cypmh$train$response) %>%
   (function(.x) max(.x) / .x)()
@@ -127,3 +150,36 @@ kr <- factor(levels(cypmh$train$response)[p %>%
 ], levels(cypmh$train$response))
 
 confusionMatrix(kr, cypmh$validate$response)
+
+
+
+library(randomForest)
+library(mlbench)
+
+# library(doParallel)
+# cl <- makePSOCKcluster(10)
+# registerDoParallel(cl)
+
+control <- trainControl(method="repeatedcv", number=10, repeats=3, search="random")
+set.seed(2358)
+mtry <- sqrt(ncol(cypmh$train$data))
+
+tictoc::tic()
+rf_random <- train(cypmh$train$data,
+                   cypmh$train$response,
+                   xtest = cypmh$test$data,
+                   ytest = cypmh$test$response,
+                   method = "rf",
+                   metric = "Accuracy",
+                   ntree = 25,
+                   nodesize = 1000,
+                   tuneLength = 15,
+                   do.trace = 1,
+                   trControl = control)
+
+tictoc::toc()
+# stopCluster(cl)
+
+print(rf_random)
+plot(rf_random)
+
