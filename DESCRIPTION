@@ -42,7 +42,12 @@ Imports:
     odbc,
     tidyr,
     forcats,
-    readxl
+    readxl,
+    purrr,
+    recipes,
+    MASS,
+    stats,
+    caret
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5, 
     github::nhs-r-community/NHSRtools@main
