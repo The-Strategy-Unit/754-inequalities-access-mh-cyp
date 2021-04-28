@@ -26,10 +26,13 @@ list(
   tar_target(ethnicity, readr::read_csv(ethnicity_file, col_types = "cc")),
   tar_target(source_referral_file, "ref/source_referral.csv", format = "file"),
   tar_target(source_referral, readr::read_csv(source_referral_file, col_types = "cc")),
-  tar_target(cypmh, get_cypmh(Sys.getenv("CON_STR"),
-                              Sys.getenv("CYPMH_TABLE_NAME"),
-                              imd,
-                              ethnicity,
-                              source_referral,
-                              last_edit_cypmh))
+  # cypmh data ----
+  tar_target(raw_cypmh,
+             get_cypmh(Sys.getenv("CON_STR"),
+                       Sys.getenv("CYPMH_TABLE_NAME"))),
+  tar_target(cypmh,
+             process_cypmh(raw_cypmh,
+                           imd,
+                           ethnicity,
+                           source_referral)),
 )
