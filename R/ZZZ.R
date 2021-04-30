@@ -3,6 +3,9 @@
 #' @importFrom rlang .data .env
 NULL
 
+# where function is not exported from tidyselect, so mark as a global variable
+utils::globalVariables("where")
+
 #' Check for Issues
 #'
 #' Helper function to verify that there are no issues that will prevent any of the code in this project running.
