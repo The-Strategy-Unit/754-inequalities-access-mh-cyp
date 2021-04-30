@@ -2,6 +2,7 @@
 
 export(check_for_issues)
 export(cypmh_model_run_ordinal_regression)
+export(cypmh_model_run_svm)
 export(get_ccg_gss_to_ods)
 export(get_ccg_successors)
 export(get_cypmh)

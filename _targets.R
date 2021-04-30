@@ -36,6 +36,11 @@ list(
                            ethnicity,
                            source_referral)),
   # cypmh modelling ----
+  ## ordinal regression ----
   tar_target(cypmh_model_ordinal_regression,
-             cypmh_model_run_ordinal_regression(cypmh))
+             cypmh_model_run_ordinal_regression(cypmh)),
+  ## svm ----
+  # linear kernel performed best, ignoring the other types
+  tar_target(cypmh_model_svm_linear,
+             cypmh_model_run_svm(cypmh, "linear"))
 )
