@@ -35,4 +35,7 @@ list(
                            imd,
                            ethnicity,
                            source_referral)),
+  # cypmh modelling ----
+  tar_target(cypmh_model_ordinal_regression,
+             cypmh_model_run_ordinal_regression(cypmh))
 )
