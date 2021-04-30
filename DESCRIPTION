@@ -33,7 +33,6 @@ Imports:
     readr,
     rlang,
     stringr,
-    targets,
     crayon,
     curl,
     utils,
@@ -47,7 +46,11 @@ Imports:
     recipes,
     MASS,
     stats,
-    caret
+    caret,
+    parallelSVM,
+    scales
+Suggests:
+    targets
 Remotes:
     github::rOpenSci/fingertipsR@v1.0.5, 
     github::nhs-r-community/NHSRtools@main
