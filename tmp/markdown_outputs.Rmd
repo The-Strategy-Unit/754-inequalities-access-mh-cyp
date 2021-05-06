@@ -1,0 +1,711 @@
+---
+title: "CYP_MH_Inequalities_outputs"
+author: "Alexander Lawless"
+date: "27/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 15, fig.height = 12)
+
+library(tidyverse)
+library(targets)
+library(janitor)
+library(sf)
+library(leaflet)
+library(patchwork)
+library(ggrepel)
+library(grid)
+library(gridExtra)
+
+My_rgb2hex <- function(r,g,b) sprintf('#%s',paste(as.hexmode(c(r,g,b)),collapse = ''))
+
+SU_colours <- c (
+  `orange` = My_rgb2hex(248,191,7),# "#f9bf07",
+  `charcoal` = My_rgb2hex(44,40,37),# "#2c2825",
+  `slate` = My_rgb2hex(104,111,115), # "#686f73",
+  `blue` = My_rgb2hex(88,29,193), # "#5881c1",
+  `red` = My_rgb2hex(236,101,85), # "#ec6555",
+  #additional accent colours from word doc template
+  `yellow` = My_rgb2hex(252,229,155),
+  `grey` = My_rgb2hex(163,168,172),
+  `white` = My_rgb2hex(255,255,255),
+  #light and dark ends from colour theme in word doc
+  `light orange` = My_rgb2hex(253,242,205),
+  `dark orange` = My_rgb2hex(124,95,3),
+  `light charcoal` = My_rgb2hex(235,233,231),
+  `dark charcoal` = 	"#000000",#black
+  `light slate` = My_rgb2hex(224,226,227),
+  `dark slate` = My_rgb2hex(51,55,57),
+  `light blue` = My_rgb2hex(221,229,242),
+  `dark blue` = My_rgb2hex(38,61,102),
+  `light red` = My_rgb2hex(251,224,220),
+  `dark red` = My_rgb2hex(144,29,16),
+  `light yellow` = My_rgb2hex(254,249,235),
+  `dark yellow` = My_rgb2hex(197,152,5),
+  `light grey`=My_rgb2hex(236,237,238),
+  `dark grey` = My_rgb2hex(79,84,88),
+  `light white`=My_rgb2hex(242,242,242),
+  `dark white` =My_rgb2hex(127,127,127),
+  `red2` = My_rgb2hex(215,25,28),
+  `orange2` = My_rgb2hex(253,174,97),
+  `yellow2` = My_rgb2hex(255,255,191),
+  `green2` = My_rgb2hex(171,221,164),
+  `blue2` = My_rgb2hex(43,131,186)
+)
+
+SU_cols <- function(...) {
+  cols <- c(...)
+  
+  if (is.null(cols))
+    return (SU_colours)
+  
+  SU_colours[cols]
+}
+
+SU_palettes <- list(
+  `main` = SU_cols("orange","charcoal","slate","blue","red"),
+  `oranges` = SU_cols("light orange","orange","dark orange"),
+  `slates` = SU_cols("light slate","slate","dark slate"),
+  `mixed` = SU_cols("dark red","orange","yellow","light blue","slate"),
+  `oj_coal` = SU_cols("yellow","orange","red","dark red","dark charcoal"),
+  `oj_red` = SU_cols("yellow","orange","red","dark red"),
+  `white_oj_coal` = SU_cols("white","yellow","orange","red","dark red","dark charcoal"),#added since shared
+  `lyellow_oj_coal` = SU_cols("light yellow","orange","red","dark red","dark charcoal"),#added since shared
+  `wy_oj_coal` = SU_cols("white","light yellow","yellow","orange","red","dark red","charcoal","dark charcoal"),
+  `red_coal` = SU_cols("red","dark red","charcoal","dark charcoal"),
+  `blue_yellow_red` = SU_cols("red2","orange2","yellow2","green2","blue2"),
+  `red_yellow_blue` = SU_cols("blue2","green2","yellow2","orange2","red2")
+)
+
+SU_pal <- function(palette = "main", reverse = FALSE, ...) {
+  pal <- SU_palettes[[palette]]
+  
+  if (reverse) pal <- rev(pal)
+  
+  colorRampPalette(pal, ...)
+}   
+
+scale_color_SU <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- SU_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("colour", paste0("SU_", palette), palette = pal, ...)
+  } else {
+    scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+
+scale_fill_SU <- function(palette = "main", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- SU_pal(palette = palette, reverse = reverse)
+  
+  if (discrete) {
+    discrete_scale("fill", paste0("SU_", palette), palette = pal, ...)
+  } else {
+    scale_fill_gradientn(colours = pal(256), ...)
+  }
+}  
+
+theme_SU<-
+  function (base_size){
+    theme_minimal(base_size=12) %+replace% 
+      theme(axis.title = element_text(size=11, face="bold",colour=SU_cols("charcoal")),
+            plot.title = element_text(hjust=0,face="bold",size=12,colour=SU_cols("charcoal"),margin=margin(b=4,unit="pt")),
+            plot.subtitle = element_text(hjust=0,face="italic",size=10,colour=SU_cols("charcoal"),margin=margin(b=4,unit="pt")),
+            plot.caption = element_text(hjust = 0,face="italic",size=9,colour=SU_cols("slate"),margin=margin(b=4,unit="pt")),
+            legend.text = element_text(size=10,colour=SU_cols("charcoal")),
+            legend.title = element_text(face="bold",size=11,colour=SU_cols("charcoal"),margin=margin(b=4,unit="pt")))
+  }
+
+##set theme by 
+theme_set(theme_SU())
+
+
+knitr::opts_knit$set(root.dir = here::here())
+```
+
+```{r load data, include = FALSE}
+
+## Import fingertips data + lookups ####
+fingertips_data <- tar_read(fingertips_data)
+ccg_successors <- tar_read(ccg_successors)
+stp_lookups <- tar_read(stp_lookups)
+ccg_gss_lookup <- tar_read(ccg_gss_to_ods)
+stp_nhs_region_lookups <- tar_read(stp_nhs_region_lookups)
+
+#download.file("https://opendata.arcgis.com/datasets/888dc5cc66ba4ad9b4d935871dcce251_0.csv", "tmp/ccg20_stp_region.csv")
+ccg20_stp_region <- read_csv("tmp/ccg20_stp_region.csv") %>% clean_names()
+
+#download.file("https://opendata.arcgis.com/datasets/520e9cd294c84dfaaf97cc91494237ac_0.csv", "tmp/lsoa_ccg19_stp19.csv")
+lsoa_ccg19_stp19 <- read_csv("tmp/lsoa_ccg19_stp19.csv") %>% clean_names()
+
+library(readxl)
+la_successors <- read_excel("C:/Users/alexander.lawless/OneDrive - Midlands and Lancashire CSU/Data_management/Local_authority_structural_changes_2017_20.xlsx",
+                            na = "NA") %>%
+  clean_names() %>%
+  mutate(old_code = case_when(!is.na(lad17cd) ~ lad17cd,
+                              !is.na(lad18cd) ~ lad18cd,
+                              TRUE ~ lad19cd))
+
+fingertips_data_need <-
+  fingertips_data %>%
+  filter(indicator_id %in% c(93587, 91137,91138, 91139, 91146, 91145, 92315, 90813, 92796, 91871, 91578, 91579, 91580),
+         area_type != "England",
+         sex == "Persons") %>%
+  select(indicator_id, indicator_name, area_type, area_code, area_name, sex, age, timeperiod_sortable,
+         timeperiod, value, lower_ci95_0limit, upper_ci95_0limit, count, denominator) %>%
+  group_by(indicator_id, area_code) %>%
+  mutate(time_period_rank = rank(-timeperiod_sortable)) %>%
+  filter(time_period_rank == min(time_period_rank, na.rm = T))%>% # filter on min(time_period_rank) to select most recent value
+  ungroup()
+
+
+## Organise fingertips data into CCG dataset and LA dataset ####
+# 1. CCG's
+ft_need_ccg <-
+fingertips_data_need %>%
+  filter(area_type != "County & UA (pre 4/19)") %>%
+  left_join(ccg_gss_lookup, by= c("area_code" = "ccgcd")) %>% # 0 na's
+  left_join(ccg_successors, by = c("ccgcdh" = "old_code")) %>%
+  left_join(ccg20_stp_region, by = c("new_code" = "ccg20cdh")) %>%
+  mutate(midlands_flag = case_when(nhser20nm == "Midlands" ~ "Midlands",
+                                   TRUE ~ "External"))
+
+# 2. LA's
+ft_need_la <-
+  fingertips_data_need %>%
+  filter(area_type == "County & UA (pre 4/19)") %>%
+
+  left_join(select(la_successors, old_code, lad20cd, lad20nm),
+            by = c("area_code" = "old_code"), keep = TRUE) %>% # join 2020 LA codes
+  mutate(recent_area_code = case_when(is.na(lad20cd) ~ area_code,
+                                      TRUE ~ lad20cd)) %>% # if different to 2020 code, use 2020 code
+  left_join(select(la_to_ccg_lookup, LAD20CD, CCG20CD),
+            by = c("recent_area_code" = "LAD20CD")) %>% # LA_CCG look up
+  left_join(select(UA_CCG_lookup, ctyua19cd, ccg20cd), by = c("recent_area_code" = "ctyua19cd")) %>% # UA_CCG look up
+  mutate(der_ccg = if_else(!is.na(CCG20CD), CCG20CD, ccg20cd)) %>%  # Prioritises LA derived CCG, otherwise look for UA derived
+  left_join(stp_lookups %>%
+              select(ccg20cd, ccg20nm, stp20cd) %>%
+              distinct(), by = c("der_ccg" = "ccg20cd")) %>% # Assign STP to CCG codes
+  left_join(stp_nhs_region_lookups, by = c("stp20cd" = "stp20cd"), keep = FALSE) %>%
+  mutate(midlands_flag = case_when(nhser20nm == "Midlands" ~ "Midlands",
+                                   TRUE ~ "External"))
+
+#### Original approach - Check if this is still needed
+#fingertips_data_need %>%
+#  filter(area_type == "County & UA (pre 4/19)") %>%
+#  mutate(area_code = if_else(area_code == "E10000019", "E07000138",
+#                             if_else(area_code == "E10000021", "E07000154",
+#                                     area_code))) %>%  # fudge number 1: replacing Lincolnshire & Northamptonshire unitary authority with LA codes
+#  left_join(stp_lookups %>%
+#              select(stp20cd, stp20nm, lad20cd, lad20nm) %>%
+#              distinct(), by = c("area_code" = "lad20cd")) %>%
+#  left_join(stp_nhs_region_lookups, by = c("stp20cd" = "stp20cd")) %>%
+#  mutate(midlands_flag = case_when(nhser20nm == "Midlands" ~ "Midlands",
+#                                   TRUE ~ "External")) %>%
+#  filter(!(area_name == "Birmingham" & stp20nm.y  == "The Black Country and West Birmingham")) # remove double counting of Birmingham LA (contains 2x CCG's)
+
+# E10000019 UA - Lincolnshire ---- LA E07000138	Lincoln
+# E10000021 UA - Northamptonshire ----- LA E07000154	Northampton
+
+
+
+## PHE fingertips indicators by STP ####
+# CCG indicators by STP
+CCG_indicators_STP_summary <-
+ft_need_ccg %>%
+  filter(indicator_id == 91578) %>% # Prevalence of emotional disorders (GP registered pop aged 5-16) (2015)
+  group_by(stp20nm, stp20cd) %>%
+  summarise(emot_dis_count_sum = sum(count),
+            emot_dis_denom_sum = sum(denominator)) %>%
+  mutate(emot_dis_value = emot_dis_count_sum/emot_dis_denom_sum*100) %>%
+
+  left_join(stp_nhs_region_lookups %>%
+              select(stp20cd, nhser20nm) %>%
+              distinct(),
+            by = c("stp20cd" = "stp20cd")) %>%
+  mutate(midlands_flag = case_when(nhser20nm == "Midlands" ~ "Midlands",
+                                   TRUE ~ "External")) %>%
+  select(1,2,7,3:5) %>%
+  #filter(midlands_flag == "Midlands") %>%
+
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 91579) %>% # Prevalence of conduct disorders (2015)
+              group_by(stp20nm) %>%
+              summarise(cond_dis_count_sum = sum(count),
+                        cond_dis_denom_sum = sum(denominator)) %>%
+              mutate(cond_dis_value = cond_dis_count_sum/cond_dis_denom_sum*100),
+            by = "stp20nm") %>%
+
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 91580) %>% # Prevalence of hyperkinetic disorders (2015)
+              group_by(stp20nm) %>%
+              summarise(hyperkin_dis_count_sum = sum(count),
+                        hyperkin_dis_denom_sum = sum(denominator)) %>%
+              mutate(hyperkin_dis_value = hyperkin_dis_count_sum/hyperkin_dis_denom_sum*100),
+            by = "stp20nm") %>%
+
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 90813) %>% # Self harm (2014/15)
+              group_by(stp20nm) %>%
+              summarise(self_harm_count_sum = sum(count),
+                        self_harm_denom_sum = sum(denominator)) %>%
+              mutate(self_harm_value = self_harm_count_sum/self_harm_denom_sum*10000),
+            by = "stp20nm")
+
+# LA indicators by STP
+LA_indicators_STP_summary <-
+  ft_need_la %>%
+  filter(indicator_id == 91145) %>%
+  group_by(stp20nm, stp20cd) %>%
+  summarise(adhd_count_sum = sum(count),
+            adhd_denom_sum = sum(denominator)) %>%
+  ungroup() %>%
+  mutate(adhd_prev = adhd_count_sum/adhd_denom_sum*100) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 91146) %>%
+      group_by(stp20cd) %>%
+      summarise(eating_dis_count_sum = sum(count),
+                eating_dis_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(eating_dis_prev = eating_dis_count_sum/eating_dis_denom_sum*100),
+    by = c("stp20cd")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 91871) %>%
+      group_by(stp20cd) %>%
+      summarise(pupil_dis_count_sum = sum(count),
+                pupil_dis_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(pupil_dis_prev = pupil_dis_count_sum/pupil_dis_denom_sum*100),
+    by = c("stp20cd")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 92315) %>%
+      group_by(stp20cd) %>%
+      summarise(lac_count_sum = sum(count),
+                lac_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(lac_prev = lac_count_sum/lac_denom_sum*100),
+    by = c("stp20cd")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 93587) %>%
+      group_by(stp20cd) %>%
+      summarise(childen_mh_count_sum = sum(value),
+                children_mh_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(childen_mh_prev = childen_mh_count_sum/children_mh_denom_sum*100),
+    by = c("stp20cd")
+  )
+
+ #write_csv(LA_STP_summary, "C:/Users/alexander.lawless/OneDrive - Midlands and Lancashire CSU/1. Projects/2020_21/DSU_Inequalities_in_access_to_MH_CYP/Need and demand/LA_STP_summary.csv")
+
+## PHE fingertips indicators by CCG ####
+
+CCG_indicators_CCG_summary <-
+  ft_need_ccg %>%
+  filter(indicator_id == 91578) %>% # Prevalence of emotional disorders (GP registered pop aged 5-16) (2015)
+  group_by(ccg20cd, ccg20nm, stp20cd, stp20nm) %>%
+  summarise(emot_dis_count_sum = sum(count),
+            emot_dis_denom_sum = sum(denominator)) %>%
+  mutate(emot_dis_value = emot_dis_count_sum/emot_dis_denom_sum*100) %>%
+
+  left_join(stp_nhs_region_lookups %>%
+              select(stp20cd, nhser20nm) %>%
+              distinct(),
+            by = c("stp20cd" = "stp20cd")) %>%
+  mutate(midlands_flag = case_when(nhser20nm == "Midlands" ~ "Midlands",
+                                   TRUE ~ "External")) %>%
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 91579) %>% # Prevalence of conduct disorders (2015)
+              group_by(ccg20cd, stp20nm) %>%
+              summarise(cond_dis_count_sum = sum(count),
+                        cond_dis_denom_sum = sum(denominator)) %>%
+              mutate(cond_dis_value = cond_dis_count_sum/cond_dis_denom_sum*100),
+            by = "ccg20cd") %>%
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 91580) %>% # Prevalence of hyperkinetic disorders (2015)
+              group_by(ccg20cd, stp20nm) %>%
+              summarise(hyperkin_dis_count_sum = sum(count),
+                        hyperkin_dis_denom_sum = sum(denominator)) %>%
+              mutate(hyperkin_dis_value = hyperkin_dis_count_sum/hyperkin_dis_denom_sum*100),
+            by = "ccg20cd") %>%
+  left_join(ft_need_ccg %>%
+              filter(indicator_id == 90813) %>% # Self harm (2014/15)
+              group_by(ccg20cd, stp20nm) %>%
+              summarise(self_harm_count_sum = sum(count),
+                        self_harm_denom_sum = sum(denominator)) %>%
+              mutate(self_harm_value = self_harm_count_sum/self_harm_denom_sum*10000),
+            by = "ccg20cd") %>%
+  ungroup() %>%
+  select(everything(),-contains("stp20nm"), - nhser20nm)
+
+LA_indicators_CCG_summary <-
+  ft_need_la %>%
+  filter(indicator_id == 91145) %>%
+  group_by(der_ccg, ccg20nm) %>%
+  summarise(adhd_count_sum = sum(count),
+            adhd_denom_sum = sum(denominator)) %>%
+  ungroup() %>%
+  mutate(adhd_prev = adhd_count_sum/adhd_denom_sum*100) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 91146) %>%
+      group_by(der_ccg) %>%
+      summarise(eating_dis_count_sum = sum(count),
+                eating_dis_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(eating_dis_prev = eating_dis_count_sum/eating_dis_denom_sum*100),
+    by = c("der_ccg")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 91871) %>%
+      group_by(der_ccg) %>%
+      summarise(pupil_dis_count_sum = sum(count),
+                pupil_dis_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(pupil_dis_prev = pupil_dis_count_sum/pupil_dis_denom_sum*100),
+    by = c("der_ccg")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 92315) %>%
+      group_by(der_ccg) %>%
+      summarise(lac_count_sum = sum(count),
+                lac_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(lac_prev = lac_count_sum/lac_denom_sum*100),
+    by = c("der_ccg")) %>%
+
+  left_join(
+    ft_need_la %>%
+      filter(indicator_id == 93587) %>%
+      group_by(der_ccg) %>%
+      summarise(childen_mh_count_sum = sum(value),
+                children_mh_denom_sum = sum(denominator)) %>%
+      ungroup() %>%
+      mutate(childen_mh_prev = childen_mh_count_sum/children_mh_denom_sum*100),
+    by = c("der_ccg")
+  )
+
+
+## Need summary ####
+STP_need_summary <-
+  CCG_indicators_STP_summary %>%
+  #select(everything(), -contains("denom"), -contains("value")) %>%
+  left_join(LA_indicators_STP_summary %>%
+               #select( -contains("denom"), -contains("prev")) %>%
+               select(-stp20cd), by = c("stp20nm" = "stp20nm")) %>%
+  clean_names() %>%
+  ungroup()
+
+CCG_need_summary <-
+  CCG_indicators_CCG_summary %>%
+  left_join(select(LA_indicators_CCG_summary, -ccg20nm), by = c("ccg20cd" = "der_ccg"), keep = FALSE)
+
+## Import demand data ####
+STP_demand <-
+  read_csv("C:/Users/alexander.lawless/OneDrive - Midlands and Lancashire CSU/1. Projects/2020_21/DSU_Inequalities_in_access_to_MH_CYP/Need and demand/STP_demand_summary.csv") %>%
+  select(-1) %>%
+  clean_names() %>%
+  rename(stp20nm = stp20nm_x)
+
+CCG_demand <-
+  read_csv("C:/Users/alexander.lawless/OneDrive - Midlands and Lancashire CSU/1. Projects/2020_21/DSU_Inequalities_in_access_to_MH_CYP/Need and demand/CCG_demand_summary.csv") %>%
+  select(-1) %>%
+  clean_names() %>%
+  rename(stp20nm = stp20nm_x)
+
+
+## Merge need and demand ####
+
+STP_need_demand <-
+STP_need_summary %>% 
+  left_join(STP_demand %>% select(-stp20nm), 
+            by = c("stp20cd"), keep = FALSE) %>%
+  select(everything(), -contains("denom"), -contains("value"), -contains("prev")) %>%
+  mutate(emot_dis_ratio =     n_emotional_dis / emot_dis_count_sum,
+         cond_ratio =         n_conduct_dis   / cond_dis_count_sum,
+         hyperkin_ratio =     n_hyperkin_dis  / hyperkin_dis_count_sum,
+         eating_dis_ratio =   n_eating_dis    / eating_dis_count_sum,
+         self_harm_ratio =    self_harm_count_sum / n_self_harm     # Switch self-harm measures around
+         ) 
+
+CCG_need_demand <-
+  CCG_need_summary %>%
+  left_join(CCG_demand %>%
+              select(-stp20cd), by = c("ccg20cd")) %>%
+  mutate(emot_dis_ratio =     n_emotional_dis / emot_dis_count_sum,
+         cond_ratio =         n_conduct_dis   / cond_dis_count_sum,
+         hyperkin_ratio =     n_hyperkin_dis  / hyperkin_dis_count_sum,
+         eating_dis_ratio =   n_eating_dis    / eating_dis_count_sum, # Local authority derived .........
+         self_harm_ratio =    self_harm_count_sum / n_self_harm     # Switch self-harm measures around
+  ) 
+
+
+
+
+
+
+## Mapping ####
+stps <- st_read("https://opendata.arcgis.com/datasets/24ebc8b4ff774c98b624072a898490bc_0.geojson")
+nhse_regions <- st_read("https://opendata.arcgis.com/datasets/719d6d66a5fa4765aa4dc582571010ed_0.geojson")
+ccgs <- st_read("https://opendata.arcgis.com/datasets/8e410b3299154bb3a93fae1a69ed4f2b_1.geojson")
+
+## Visualisation functions ####
+# Bar chart function
+demand_ratio_stp <- function(indicator, title) {
+
+sub_data <-
+STP_need_demand %>%
+  select(1:4, indicator) %>%
+  rename(ratio = indicator) %>%
+  mutate(stp20nm = fct_reorder(stp20nm.x, ratio)) %>%
+  drop_na(ratio) %>%
+  mutate(mean = mean(ratio))
+
+
+sub_data %>%
+  ggplot(aes(x = stp20nm, y = ratio)) +
+  geom_col(fill = "#d9d9d9") +
+  geom_col(data = sub_data %>% filter(midlands_flag == "Midlands"),
+           #aes(fill = stp20cd)
+           fill = "#fec44f"
+           ) +
+  geom_hline(aes(yintercept = mean), linetype = 'longdash') +
+  scale_x_discrete(labels = function(x) {
+    ifelse(x %in% unique(filter(sub_data, midlands_flag == "Midlands")$stp20nm),
+           str_remove_all(x, "NHS | CCG"),
+           "")
+  }) +
+  theme(axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1),
+        legend.position = "none") +
+  labs(title = title, #indicator_name
+       subtitle = "Children and Young People's (CYP) mental health. STP, 2019",
+       x = "STP Name",
+       y = "Need:Demand ratio",
+       caption = "Note: Low need:demand ratio suggest widespread unmet need")
+}
+
+# Map Function
+
+stp_map_funct_nat_reg <- function(indicator, indicator_desc) {
+
+  sub_data <-
+    stps %>%
+    inner_join(STP_need_demand, by = c("stp20cd")) %>%
+    select(1:9, midlands_flag, indicator, geometry) %>%
+    rename(value = indicator)
+
+  national <-
+    sub_data %>%
+    ggplot() +
+    geom_sf(aes(fill = value)) +
+    geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black", size = 1.2) +
+    scale_fill_distiller(type = "div", palette = "Spectral", direction = 1) +
+    theme(axis.text = element_blank(),
+          panel.grid.major = element_blank(),
+          plot.title = element_text(hjust = 0.5))+
+    labs(x = "", y = "",
+         title = "National",
+         subtitle = "",
+         caption = "",
+         fill = "Need:demand ratio")
+
+  midlands <-
+    sub_data %>%
+    ggplot() +
+    geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black") +
+    geom_sf(data = sub_data %>%  filter(midlands_flag == "Midlands"), aes(fill = value)) +
+    #geom_sf_label(data = sub_data %>%  filter(midlands_flag == "Midlands"),
+    #             aes(label = stringr::str_wrap(stp20nm,15)),
+    #             size = 3, label.padding = unit(0.15, "lines")) +
+    ggrepel::geom_label_repel(
+      data = sub_data %>%  filter(midlands_flag == "Midlands"),
+      aes(label = stringr::str_wrap(stp20nm,15), geometry = geometry),
+      size = 3,
+      stat = "sf_coordinates" , 
+      max.overlaps = getOption("ggrepel.max.overlaps", default = Inf),
+      box.padding = 5,
+      min.segment.length = 0) +
+    scale_fill_distiller(type = "div", palette = "Spectral", direction = 1, limits = c(min(sub_data$value), max(sub_data$value))) +
+    theme(axis.text = element_blank(),
+          panel.grid.major = element_blank(),
+          plot.title = element_text(hjust = 0.5))+
+    labs(x = "", y = "",
+         title = "NHSE Midlands region",
+         subtitle = "",
+         caption = "",
+         fill = "Need:demand ratio")
+
+
+  # Patch plot together
+  national / midlands +
+    plot_annotation(title = indicator_desc)
+}
+
+# National only
+stp_map_funct_nat <- function(indicator, indicator_desc) {
+  
+  sub_data <-
+    stps %>%
+    inner_join(STP_need_demand, by = c("stp20cd")) %>%
+    select(1:9, midlands_flag, indicator, geometry) %>%
+    rename(value = indicator) 
+  
+  key <-
+    tableGrob(
+      as_tibble(
+        sub_data %>%  
+          filter(midlands_flag == "Midlands") %>% 
+          mutate(Label = rank(bng_e)) %>% 
+          select(Label, stp20nm) %>% 
+          rename(STP = stp20nm)) %>% 
+        select(-geometry) %>% 
+        arrange(Label), 
+      rows = NULL,
+      theme = ttheme_default(
+        base_size = 10, 
+        core=list(bg_params = list(fill = NA , col=NA),
+                  fg_params=list(fontface=3)),
+        colhead=list(fg_params=list(col="#2c2825", fontface=4L))
+      )
+    )
+  
+  national <-
+    sub_data %>%
+    ggplot() +
+    geom_sf(aes(fill = value)) +
+    geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black", size = 1.2) +
+    #ggrepel::geom_label_repel(
+    #  data = sub_data %>%  filter(midlands_flag == "Midlands"),
+    #  aes(label = stringr::str_wrap(stp20nm,15), geometry = geometry),
+    #  stat = "sf_coordinates" , 
+    #  max.overlaps = getOption("ggrepel.max.overlaps", default = Inf),
+    #  box.padding = 2 #, min.segment.length = 0
+    #) +
+    geom_sf_label(data = sub_data %>%  
+                    filter(midlands_flag == "Midlands") %>% 
+                    mutate(label = rank(bng_e)), 
+                  aes(label = label), alpha = 0.2) +
+    
+    scale_fill_distiller(type = "div", palette = "Spectral", direction = 1) +
+    theme(axis.text = element_blank(),
+          panel.grid.major = element_blank(),
+          plot.title = element_text(hjust = 0.5))+
+    labs(x = "", y = "",
+         fill = "Need:Demand ratio")
+  
+  # Plot with Patchwork
+  national + 
+    key + 
+    plot_layout(ncol=2,widths=c(2,1)) +
+    plot_annotation(title = indicator_desc)
+  
+  }
+
+
+# STP need:demand ratio - Scatter plot
+scatter_function_ratio <- function(var_need_count, var_denom, var_value, var_ratio, var_demand_count, title) {
+
+  sub_data <-
+  STP_need_summary %>%
+    select(stp20nm, stp20cd, var_need_count, var_denom, var_value) %>%
+    left_join(STP_need_demand %>% select(-stp20nm.x), by = c("stp20cd")) %>%
+    ungroup() %>%
+    select(1:5, var_ratio, var_demand_count, midlands_flag) %>%
+    rename(value = var_value,
+           ratio = var_ratio,
+           need_count = var_need_count,
+           denom = var_denom,
+           demand_count = var_demand_count
+             )  %>%
+    mutate(ratio = -ratio)
+
+  grids <-
+    sub_data %>%
+    summarise(min_prev = min(value),
+              max_prev = max(value),
+              mean_prev = sum(need_count)/sum(denom)*100,
+              min_ratio = min(ratio),
+              max_ratio = max(ratio),
+              #mean_ratio = mean(ratio)
+              mean_ratio = sum(demand_count)/ sum(need_count)
+              ) %>%
+    mutate(mean_ratio = -mean_ratio)
+
+  sub_data %>%
+    ggplot(aes(x = value, y = ratio )) +
+    annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#abdda4", alpha = 0.8) + #BL
+    annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#ffed6f", alpha = 0.8) +
+    annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#ffed6f", alpha = 0.8) +
+    annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#d73027", alpha = 0.8) + #TR
+
+    geom_point(data = sub_data %>% filter(midlands_flag != "Midlands"), size = 10, shape = 21, fill = "grey", colour = "black") +
+    geom_point(data = sub_data %>% filter(midlands_flag == "Midlands"), size = 10, shape = 21, fill = "#f9bf07", colour = "black") +
+    geom_label_repel(data = sub_data %>% filter(midlands_flag == "Midlands"),
+                    aes(label = stringr::str_wrap(stp20nm,15)), box.padding = 2,
+                    max.overlaps = getOption("ggrepel.max.overlaps", default = 15)) +
+    scale_y_continuous(
+      breaks = seq(from = 0, to = -1, by = -0.25), labels = c("0", "0.25", "0.50", "0.75", "1")
+                       ) +
+    labs(title = title,
+         fill = "STP Name",
+         x = "Prevalence",
+         y = "Need:demand ratio")
+  }
+
+
+```
+
+# Mental health inequalities: Need and demand analysis 
+## Output repository
+
+Details of process... 
+Needs data from PHE fingertips 
+Demand data from MHSDS, IAPT and SUS data
+
+Ratio of number of people predicted to suffer mental health issues compared to the number of people referred for said mental health issues presented. 
+
+Low ratio suggests high degree of unmet need.
+
+### Emotional disorders:
+#### Bar chart
+
+
+```{r Emotional disorder bar chart, echo = FALSE, message = FALSE}
+demand_ratio_stp("emot_dis_ratio", "Emotional disorders - Need:demand ratio")
+```
+
+#### Map
+##### National and regional
+blah blah blahhhhhhh
+
+```{r Emotional disorder map - national and regional, echo = FALSE, message = FALSE}
+stp_map_funct_nat_reg("emot_dis_ratio", "Emotional disorders in CYP - Need:demand ratio")
+```
+
+##### National only
+blah blah blahhhhhhh
+
+```{r Emotional disorder map - national only, echo = FALSE, message = FALSE}
+stp_map_funct_nat("emot_dis_ratio", "Emotional disorders in CYP - Need:demand ratio")
+```
+
+
+##### Scatter Plot
+blah blah blahhhhhhh
+
+```{r Emotional disorder scatter plot, echo = FALSE, message = FALSE}
+scatter_function_ratio("emot_dis_count_sum", "emot_dis_denom_sum", "emot_dis_value", "emot_dis_ratio", "n_emotional_dis",
+                       "Emotion disorders in CYP - Need:demand ratio")
+```
