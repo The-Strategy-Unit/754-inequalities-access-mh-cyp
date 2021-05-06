@@ -17,11 +17,11 @@ lsoa_ccg19_stp19 <- read_csv("tmp/lsoa_ccg19_stp19.csv") %>% clean_names()
 
 library(readxl)
 la_successors <- read_excel("C:/Users/alexander.lawless/OneDrive - Midlands and Lancashire CSU/Data_management/Local_authority_structural_changes_2017_20.xlsx",
-                            na = "NA") %>%
-  clean_names() %>%
-  mutate(old_code = case_when(!is.na(lad17cd) ~ lad17cd,
-                              !is.na(lad18cd) ~ lad18cd,
-                              TRUE ~ lad19cd))
+                           na = "NA") %>%
+ clean_names() %>%
+ mutate(old_code = case_when(!is.na(lad17cd) ~ lad17cd,
+                             !is.na(lad18cd) ~ lad18cd,
+                             TRUE ~ lad19cd))
 
 fingertips_data_need <-
   fingertips_data %>%

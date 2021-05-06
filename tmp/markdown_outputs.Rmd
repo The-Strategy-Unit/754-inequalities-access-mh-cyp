@@ -126,6 +126,49 @@ knitr::opts_knit$set(root.dir = here::here())
 ```
 
 ```{r load data, include = FALSE}
+## Import geo-data ####
+la_to_ccg <- "https://opendata.arcgis.com/datasets/f0b39d6872dd4533aaf3941846134a89_0.csv" %>%
+  read_csv(col_types = "dccccccc")
+lsoa_pop <- "https://gist.githubusercontent.com/tomjemmett/917d3a134b38218546ee3df4d43812c9/raw/081a0421fe2b578dea3009fbdde69652306af322/lsoa_pop.csv" %>%
+  read_csv(col_types = "cd")
+
+county_uas <- st_read("https://opendata.arcgis.com/datasets/b216b4c8a4e74f6fb692a1785255d777_0.geojson") #Most recent available
+la <- st_read("https://opendata.arcgis.com/datasets/db23041df155451b9a703494854c18c4_0.geojson")
+stp <- st_read("https://opendata.arcgis.com/datasets/24ebc8b4ff774c98b624072a898490bc_0.geojson")
+nhse_regions <- st_read("https://opendata.arcgis.com/datasets/5e33fd1436114a19b335ed07076a4c5b_0.geojson")
+ccg <- st_read("https://ons-inspire.esriuk.com/arcgis/rest/services/Health_Boundaries/Clinical_Commissioning_Groups_April_2020_EN_BUC/MapServer/1/query?outFields=*&where=1%3D1&f=geojson")
+
+
+## Population derived look ups ####
+# LA/UA -> CCG
+la_to_ccg_lookup <-
+  la_to_ccg %>%
+  inner_join(lsoa_pop, by = "LSOA11CD") %>%
+  group_by(LAD20CD, CCG20CD) %>%
+  summarise(across(pop, sum), .groups = "drop_last") %>%
+  mutate(pcnt = pop / sum(pop)) %>%
+  filter(pcnt == max(pcnt))
+
+## Land derived lookups ####
+## County and Unitary authorities to CCG - land derived
+UA_CCG_lookup <-
+  as_tibble(
+    county_uas %>%
+      st_transform(crs = 27700) %>%
+      select(ctyua19cd, ctyua19nm) %>%
+      st_set_agr(c("ctyua19cd" = "identity", "ctyua19nm", "identity")) %>%
+      st_intersection(ccg %>%
+                        select(ccg20cd, ccg20nm) %>%
+                        st_set_agr(c("ccg20cd" = "identity", "ccg20nm" = "identity")) %>%
+                        st_transform(crs = 27700)) %>%
+      group_by(ctyua19nm) %>%
+      mutate(area = as.numeric(st_area(geometry))) %>%
+      filter(area >= 0.01 * sum(area)) %>%
+      mutate(pcnt = area / sum(area)) %>%
+      st_transform(crs = 4326) %>%
+      filter(pcnt == max(pcnt))
+  ) %>%
+  select(-geometry)
 
 ## Import fingertips data + lookups ####
 fingertips_data <- tar_read(fingertips_data)
@@ -452,15 +495,6 @@ CCG_need_demand <-
   ) 
 
 
-
-
-
-
-## Mapping ####
-stps <- st_read("https://opendata.arcgis.com/datasets/24ebc8b4ff774c98b624072a898490bc_0.geojson")
-nhse_regions <- st_read("https://opendata.arcgis.com/datasets/719d6d66a5fa4765aa4dc582571010ed_0.geojson")
-ccgs <- st_read("https://opendata.arcgis.com/datasets/8e410b3299154bb3a93fae1a69ed4f2b_1.geojson")
-
 ## Visualisation functions ####
 # Bar chart function
 demand_ratio_stp <- function(indicator, title) {
@@ -469,7 +503,7 @@ sub_data <-
 STP_need_demand %>%
   select(1:4, indicator) %>%
   rename(ratio = indicator) %>%
-  mutate(stp20nm = fct_reorder(stp20nm.x, ratio)) %>%
+  mutate(stp20nm = fct_reorder(stp20nm, ratio)) %>%
   drop_na(ratio) %>%
   mutate(mean = mean(ratio))
 
@@ -488,7 +522,9 @@ sub_data %>%
            "")
   }) +
   theme(axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1),
-        legend.position = "none") +
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
   labs(title = title, #indicator_name
        subtitle = "Children and Young People's (CYP) mental health. STP, 2019",
        x = "STP Name",
@@ -496,13 +532,48 @@ sub_data %>%
        caption = "Note: Low need:demand ratio suggest widespread unmet need")
 }
 
+demand_ratio_ccg <- function(indicator, title) {
+
+  sub_data <-
+    CCG_need_demand %>%
+    select(1:3, midlands_flag, indicator) %>%
+    rename(ratio = indicator) %>%
+    mutate(ccg20nm = fct_reorder(ccg20nm, ratio)) %>%
+    drop_na(ratio) %>%
+    mutate(mean = mean(ratio))
+
+
+  sub_data %>%
+    ggplot(aes(x = ccg20nm, y = ratio)) +
+    geom_col(fill = "#d9d9d9") +
+    geom_col(data = sub_data %>% filter(midlands_flag == "Midlands"),
+             #aes(fill = stp20cd)
+             fill = "#fec44f"
+    ) +
+    geom_hline(aes(yintercept = mean), linetype = 'longdash') +
+    scale_x_discrete(labels = function(x) {
+      ifelse(x %in% unique(filter(sub_data, midlands_flag == "Midlands")$ccg20nm),
+             str_remove_all(x, "NHS | CCG"),
+             "")
+    }) +
+    theme(axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1),
+          legend.position = "none",
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+    labs(title = title, #indicator_name
+         subtitle = "Children and Young People's (CYP) mental health. STP, 2019",
+         x = "CCG Name",
+         y = "Need:Demand ratio",
+         caption = "Note: Low need:demand ratio suggest widespread unmet need")
+}
+
 # Map Function
 
 stp_map_funct_nat_reg <- function(indicator, indicator_desc) {
 
   sub_data <-
-    stps %>%
-    inner_join(STP_need_demand, by = c("stp20cd")) %>%
+    stp %>%
+    inner_join(STP_need_demand %>% select(-stp20nm), by = c("stp20cd"), keep = FALSE) %>%
     select(1:9, midlands_flag, indicator, geometry) %>%
     rename(value = indicator)
 
@@ -526,18 +597,18 @@ stp_map_funct_nat_reg <- function(indicator, indicator_desc) {
     ggplot() +
     geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black") +
     geom_sf(data = sub_data %>%  filter(midlands_flag == "Midlands"), aes(fill = value)) +
-    #geom_sf_label(data = sub_data %>%  filter(midlands_flag == "Midlands"),
-    #             aes(label = stringr::str_wrap(stp20nm,15)),
-    #             size = 3, label.padding = unit(0.15, "lines")) +
     ggrepel::geom_label_repel(
       data = sub_data %>%  filter(midlands_flag == "Midlands"),
       aes(label = stringr::str_wrap(stp20nm,15), geometry = geometry),
       size = 3,
-      stat = "sf_coordinates" , 
-      max.overlaps = getOption("ggrepel.max.overlaps", default = Inf),
-      box.padding = 5,
-      min.segment.length = 0) +
-    scale_fill_distiller(type = "div", palette = "Spectral", direction = 1, limits = c(min(sub_data$value), max(sub_data$value))) +
+      stat = "sf_coordinates" ,
+      max.overlaps = getOption("ggrepel.max.overlaps", default = Inf)
+      ) +
+    scale_fill_distiller(type = "div", 
+                         palette = "Spectral", 
+                         direction = 1, 
+                         limits = c(min(sub_data$value),
+                                    max(sub_data$value))) +
     theme(axis.text = element_blank(),
           panel.grid.major = element_blank(),
           plot.title = element_text(hjust = 0.5))+
@@ -547,34 +618,93 @@ stp_map_funct_nat_reg <- function(indicator, indicator_desc) {
          caption = "",
          fill = "Need:demand ratio")
 
-
-  # Patch plot together
   national / midlands +
     plot_annotation(title = indicator_desc)
-}
+  }
 
 # National only
 stp_map_funct_nat <- function(indicator, indicator_desc) {
+
+  sub_data <-
+    stp %>%
+    inner_join(STP_need_demand %>% select(-stp20nm), by = c("stp20cd"), keep = FALSE)  %>%
+    select(1:9, midlands_flag, indicator, geometry) %>%
+    rename(value = indicator)
+
+  key <-
+    tableGrob(
+      as_tibble(
+        sub_data %>%
+          filter(midlands_flag == "Midlands") %>%
+          mutate(Label = rank(bng_e)) %>%
+          select(Label, stp20nm) %>%
+          rename(STP = stp20nm)) %>%
+        select(-geometry) %>%
+        arrange(Label),
+      rows = NULL,
+      theme = ttheme_default(
+        base_size = 10,
+        core=list(bg_params = list(fill = NA , col=NA),
+                  fg_params=list(fontface=3)),
+        colhead=list(fg_params=list(col="#2c2825", fontface=4L))
+      )
+    )
+
+  national <-
+    sub_data %>%
+    ggplot() +
+    geom_sf(aes(fill = value)) +
+    geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black", size = 1.2) +
+    #ggrepel::geom_label_repel(
+    #  data = sub_data %>%  filter(midlands_flag == "Midlands"),
+    #  aes(label = stringr::str_wrap(stp20nm,15), geometry = geometry),
+    #  stat = "sf_coordinates" ,
+    #  max.overlaps = getOption("ggrepel.max.overlaps", default = Inf),
+    #  box.padding = 2 #, min.segment.length = 0
+    #) +
+    geom_sf_label(data = sub_data %>%
+                    filter(midlands_flag == "Midlands") %>%
+                    mutate(label = rank(bng_e)),
+                  aes(label = label), alpha = 0.2) +
+
+    scale_fill_distiller(type = "div", palette = "Spectral", direction = 1) +
+    theme(axis.text = element_blank(),
+          panel.grid.major = element_blank(),
+          plot.title = element_text(hjust = 0.5))+
+    labs(x = "", y = "",
+         fill = "Need:Demand ratio")
+
+  # Plot with Patchwork
+  national +
+    key +
+    plot_layout(ncol=2,widths=c(2,1)) +
+    plot_annotation(title = indicator_desc)
+
+  }
+
+
+# CCG 
+ccg_map_funct_nat <- function(indicator, indicator_desc) {
   
   sub_data <-
-    stps %>%
-    inner_join(STP_need_demand, by = c("stp20cd")) %>%
+    ccg %>%
+    inner_join(CCG_need_demand %>% select(-ccg20nm), by = c("ccg20cd"), keep = FALSE)  %>%
     select(1:9, midlands_flag, indicator, geometry) %>%
-    rename(value = indicator) 
+    rename(value = indicator)
   
   key <-
     tableGrob(
       as_tibble(
-        sub_data %>%  
-          filter(midlands_flag == "Midlands") %>% 
-          mutate(Label = rank(bng_e)) %>% 
-          select(Label, stp20nm) %>% 
-          rename(STP = stp20nm)) %>% 
-        select(-geometry) %>% 
-        arrange(Label), 
+        sub_data %>%
+          filter(midlands_flag == "Midlands") %>%
+          mutate(Label = rank(bng_e)) %>%
+          select(Label, ccg20nm) %>%
+          rename(CCG = ccg20nm)) %>%
+        select(-geometry) %>%
+        arrange(Label),
       rows = NULL,
       theme = ttheme_default(
-        base_size = 10, 
+        base_size = 10,
         core=list(bg_params = list(fill = NA , col=NA),
                   fg_params=list(fontface=3)),
         colhead=list(fg_params=list(col="#2c2825", fontface=4L))
@@ -586,17 +716,12 @@ stp_map_funct_nat <- function(indicator, indicator_desc) {
     ggplot() +
     geom_sf(aes(fill = value)) +
     geom_sf(data = nhse_regions %>% filter(nhser20nm == "Midlands"), fill = NA, colour = "black", size = 1.2) +
-    #ggrepel::geom_label_repel(
-    #  data = sub_data %>%  filter(midlands_flag == "Midlands"),
-    #  aes(label = stringr::str_wrap(stp20nm,15), geometry = geometry),
-    #  stat = "sf_coordinates" , 
-    #  max.overlaps = getOption("ggrepel.max.overlaps", default = Inf),
-    #  box.padding = 2 #, min.segment.length = 0
-    #) +
-    geom_sf_label(data = sub_data %>%  
-                    filter(midlands_flag == "Midlands") %>% 
-                    mutate(label = rank(bng_e)), 
-                  aes(label = label), alpha = 0.2) +
+    
+    geom_sf_text(data = sub_data %>%
+                    filter(midlands_flag == "Midlands") %>%
+                    mutate(label = rank(bng_e)),
+                  aes(label = label), size = 3,
+                  check_overlap = TRUE) +
     
     scale_fill_distiller(type = "div", palette = "Spectral", direction = 1) +
     theme(axis.text = element_blank(),
@@ -606,50 +731,54 @@ stp_map_funct_nat <- function(indicator, indicator_desc) {
          fill = "Need:Demand ratio")
   
   # Plot with Patchwork
-  national + 
-    key + 
+  national +
+    key +
     plot_layout(ncol=2,widths=c(2,1)) +
     plot_annotation(title = indicator_desc)
   
-  }
-
+}
 
 # STP need:demand ratio - Scatter plot
-scatter_function_ratio <- function(var_need_count, var_denom, var_value, var_ratio, var_demand_count, title) {
+scatter_function_ratio <- function(var_need_count, var_need_denom, var_need_value, 
+                                   var_ratio, var_demand_count, 
+                                   title) {
 
   sub_data <-
   STP_need_summary %>%
-    select(stp20nm, stp20cd, var_need_count, var_denom, var_value) %>%
-    left_join(STP_need_demand %>% select(-stp20nm.x), by = c("stp20cd")) %>%
+    select(stp20nm, stp20cd, var_need_count, var_need_denom, var_need_value) %>%
+    left_join(STP_need_demand %>% select(-stp20nm, -var_need_count), by = c("stp20cd")) %>%
     ungroup() %>%
     select(1:5, var_ratio, var_demand_count, midlands_flag) %>%
-    rename(value = var_value,
-           ratio = var_ratio,
-           need_count = var_need_count,
-           denom = var_denom,
-           demand_count = var_demand_count
-             )  %>%
+    rename(need_count = var_need_count, 
+           need_denom = var_need_denom,
+           need_value = var_need_value,
+           demand_count = var_demand_count,
+           ratio = var_ratio)  %>%
     mutate(ratio = -ratio)
-
+  
   grids <-
     sub_data %>%
-    summarise(min_prev = min(value),
-              max_prev = max(value),
-              mean_prev = sum(need_count)/sum(denom)*100,
+    summarise(min_prev = min(need_value),
+              max_prev = max(need_value),
+              mean_prev = sum(need_count)/sum(need_denom)*100,
               min_ratio = min(ratio),
               max_ratio = max(ratio),
-              #mean_ratio = mean(ratio)
               mean_ratio = sum(demand_count)/ sum(need_count)
               ) %>%
     mutate(mean_ratio = -mean_ratio)
-
+  
   sub_data %>%
-    ggplot(aes(x = value, y = ratio )) +
+    ggplot(aes(x = need_value, y = ratio )) +
     annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#abdda4", alpha = 0.8) + #BL
     annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#ffed6f", alpha = 0.8) +
     annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#ffed6f", alpha = 0.8) +
     annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#d73027", alpha = 0.8) + #TR
 
+    annotate("text", x = (grids$min_prev*0.99), y = (grids$max_ratio*1.75), label = "High unmet need", 
+             size = 4, angle = 90) +
+    annotate("text", x = (grids$min_prev*0.99), y = (grids$min_ratio*0.95), label = "Low unmet need", 
+             size = 4, angle = 90) +
+    
     geom_point(data = sub_data %>% filter(midlands_flag != "Midlands"), size = 10, shape = 21, fill = "grey", colour = "black") +
     geom_point(data = sub_data %>% filter(midlands_flag == "Midlands"), size = 10, shape = 21, fill = "#f9bf07", colour = "black") +
     geom_label_repel(data = sub_data %>% filter(midlands_flag == "Midlands"),
@@ -658,54 +787,198 @@ scatter_function_ratio <- function(var_need_count, var_denom, var_value, var_rat
     scale_y_continuous(
       breaks = seq(from = 0, to = -1, by = -0.25), labels = c("0", "0.25", "0.50", "0.75", "1")
                        ) +
+    theme(axis.text.y = element_blank()) +
     labs(title = title,
          fill = "STP Name",
          x = "Prevalence",
-         y = "Need:demand ratio")
+         y = "Need:Demand ratio")
   }
 
+# CCG scatter plot
+scatter_function_ratio_ccg <- function(var_need_count, var_need_denom, var_need_value,
+                                   var_ratio, var_demand_count,
+                                   title) {
+  
+  sub_data <-
+    CCG_need_summary %>%
+    select(ccg20cd, ccg20nm, var_need_count, var_need_denom, var_need_value) %>%
+    left_join(CCG_need_demand %>% select(-ccg20nm, -var_need_count, -var_need_denom, -var_need_value), by = c("ccg20cd")) %>%
+    ungroup() %>%
+    select(1:5, var_ratio, var_demand_count, midlands_flag) %>%
+    rename(need_count = var_need_count,
+           need_denom = var_need_denom,
+           need_value = var_need_value,
+           demand_count = var_demand_count,
+           ratio = var_ratio)  %>%
+    mutate(ratio = -ratio)
+  
+  grids <-
+    sub_data %>%
+    summarise(min_prev = min(need_value),
+              max_prev = max(need_value),
+              mean_prev = sum(need_count)/sum(need_denom)*100,
+              min_ratio = min(ratio),
+              max_ratio = max(ratio),
+              mean_ratio = sum(demand_count)/ sum(need_count)
+    ) %>%
+    mutate(mean_ratio = -mean_ratio)
+  
+  sub_data %>%
+    ggplot(aes(x = need_value, y = ratio )) +
+    annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#abdda4", alpha = 0.8) + #BL
+    annotate("rect", xmin = grids$min_prev, xmax = grids$mean_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#ffed6f", alpha = 0.8) +
+    annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$min_ratio, ymax = grids$mean_ratio, fill= "#ffed6f", alpha = 0.8) +
+    annotate("rect", xmin = grids$mean_prev, xmax = grids$max_prev, ymin = grids$mean_ratio, ymax = grids$max_ratio, fill= "#d73027", alpha = 0.8) + #TR
+    
+    annotate("text", x = (grids$min_prev*0.99), y = (grids$max_ratio*1.75), label = "High unmet need",
+             size = 4, angle = 90) +
+    annotate("text", x = (grids$min_prev*0.99), y = (grids$min_ratio*0.95), label = "Low unmet need",
+             size = 4, angle = 90) +
+    
+    geom_point(data = sub_data %>% filter(midlands_flag != "Midlands"), size = 6, shape = 21, fill = "grey", colour = "black") +
+    geom_point(data = sub_data %>% filter(midlands_flag == "Midlands"), size = 8, shape = 21, fill = "#f9bf07", colour = "black") +
+    geom_label_repel(data = sub_data %>% filter(midlands_flag == "Midlands"),
+                     aes(label = stringr::str_wrap(ccg20nm,15)), box.padding = 1,
+                     max.overlaps = getOption("ggrepel.max.overlaps", default = Inf)) +
+    scale_y_continuous(
+      breaks = seq(from = 0, to = -1, by = -0.25), labels = c("0", "0.25", "0.50", "0.75", "1")
+    ) +
+    theme(axis.text.y = element_blank()) +
+    labs(title = title,
+         fill = "CCG Name",
+         x = "Prevalence",
+         y = "Need:Demand ratio")
+  }
 
 ```
 
 # Mental health inequalities: Need and demand analysis 
 ## Output repository
 
-Details of process... 
-Needs data from PHE fingertips 
-Demand data from MHSDS, IAPT and SUS data
+Data sources
+Need:Public Health England Fingertips indicators - Children and Young People's Mental Health and Wellbeing indicators of need 
+Demand: Referral and treatment data from MHSDS, IAPT and SUS data
 
-Ratio of number of people predicted to suffer mental health issues compared to the number of people referred for said mental health issues presented. 
+Need:Demand ratio = Number of people referredor treated/Number of people predicted to suffer from certain mental health conditions
 
-Low ratio suggests high degree of unmet need.
+A low Need:Demand ratio indicators an area has high levels of unmet need 
+A high Need:Demand ratio indicates an area is accessing/treating the number of people PHE predicts are in need of support.
+
+
 
 ### Emotional disorders:
-#### Bar chart
-
-
-```{r Emotional disorder bar chart, echo = FALSE, message = FALSE}
+```{r Emotional disorder bar chart - STP, echo = FALSE, message = FALSE, warning = FALSE}
 demand_ratio_stp("emot_dis_ratio", "Emotional disorders - Need:demand ratio")
 ```
 
-#### Map
-##### National and regional
-blah blah blahhhhhhh
-
-```{r Emotional disorder map - national and regional, echo = FALSE, message = FALSE}
-stp_map_funct_nat_reg("emot_dis_ratio", "Emotional disorders in CYP - Need:demand ratio")
+```{r Emotional disorder bar chart - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_ccg("emot_dis_ratio", "Emotional disorders - Need:demand ratio")
 ```
 
-##### National only
-blah blah blahhhhhhh
-
-```{r Emotional disorder map - national only, echo = FALSE, message = FALSE}
+```{r Emotional disorder map - STP, echo = FALSE, message = FALSE, warning = FALSE}
 stp_map_funct_nat("emot_dis_ratio", "Emotional disorders in CYP - Need:demand ratio")
 ```
 
+``` {r Emotional disorder - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+ccg_map_funct_nat("emot_dis_ratio", "Emotional disorders in CYP - Need:demand ratio")
+```
 
-##### Scatter Plot
-blah blah blahhhhhhh
-
-```{r Emotional disorder scatter plot, echo = FALSE, message = FALSE}
+```{r Emotional disorder scatter plot - STP, echo = FALSE, message = FALSE, warning = FALSE}
 scatter_function_ratio("emot_dis_count_sum", "emot_dis_denom_sum", "emot_dis_value", "emot_dis_ratio", "n_emotional_dis",
                        "Emotion disorders in CYP - Need:demand ratio")
 ```
+
+```{r Emotional disorder scatter plot - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio_ccg("emot_dis_count_sum", "emot_dis_denom_sum", "emot_dis_value", "emot_dis_ratio", "n_emotional_dis",
+                           "Emotion disorders in CYP - Need:demand ratio")
+```
+
+
+### Conduct disorders:
+```{r Conduct disorder bar chart - STP, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_stp("cond_ratio", "Conduct disorders - Need:demand ratio")
+```
+
+```{r Conduct disorder bar chart - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_ccg("cond_ratio", "Conduct disorders - Need:demand ratio")
+```
+
+```{r Conduct disorder map - STP, echo = FALSE, message = FALSE, warning = FALSE}
+stp_map_funct_nat("cond_ratio", "Conduct disorders in CYP - Need:demand ratio")
+```
+
+```{r Conduct disorder map - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+ccg_map_funct_nat("cond_ratio", "Conduct disorders in CYP - Need:demand ratio")
+```
+
+```{r Conduct disorder scatter plot - STP, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio("cond_dis_count_sum", "cond_dis_denom_sum", "cond_dis_value",
+                       "cond_ratio", "n_conduct_dis",
+                       "Conduct disorders in CYP - Need:demand ratio")
+```
+
+```{r Conduct disorder scatter plot - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio_ccg("cond_dis_count_sum", "cond_dis_denom_sum", "cond_dis_value",
+                           "cond_ratio", "n_conduct_dis",
+                           "Conduct disorders in CYP - Need:demand ratio")
+```
+
+### Hyperkinetic disorders:
+```{r Hyperkinetic disorder bar chart - STP, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_stp("hyperkin_ratio", "Hyperkinetic disorders - Need:demand ratio")
+```
+
+```{r Hyperkinetic disorder bar chart - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_ccg("hyperkin_ratio", "Hyperkinetic disorders - Need:demand ratio")
+```
+
+```{r Hyperkinetic disorder map - STP, echo = FALSE, message = FALSE, warning = FALSE}
+stp_map_funct_nat("hyperkin_ratio", "Hyperkinetic disorders in CYP - Need:demand ratio")
+```
+
+``` {r Hyperkinetic disorder - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+ccg_map_funct_nat("hyperkin_ratio", "Hyperkinetic disorders in CYP - Need:demand ratio")
+```
+
+```{r Hyperkinetic disorder scatter plot - STP, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio("hyperkin_dis_count_sum", "hyperkin_dis_denom_sum", "hyperkin_dis_value",
+                       "hyperkin_ratio", "n_hyperkin_dis",
+                       "Hyperkinetic disorders in CYP - Need:demand ratio")
+```
+
+```{r Hyperkinetic disorder scatter plot - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio_ccg("hyperkin_dis_count_sum", "hyperkin_dis_denom_sum", "hyperkin_dis_value",
+                           "hyperkin_ratio", "n_hyperkin_dis",
+                           "Hyperkinetic disorders in CYP - Need:demand ratio")
+```
+
+### Self harm:
+```{r Self harm bar chart - STP, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_stp("self_harm_ratio", "Self harm - Need:demand ratio")
+```
+
+```{r Self harm bar chart - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+demand_ratio_ccg("self_harm_ratio", "Self harm - Need:demand ratio")
+```
+
+```{r Self harm map - STP, echo = FALSE, message = FALSE, warning = FALSE}
+stp_map_funct_nat("self_harm_ratio", "Self harm in CYP - Need:demand ratio")
+```
+
+``` {r Self harm map - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+ccg_map_funct_nat("self_harm_ratio", "Self harm in CYP - Need:demand ratio")
+```
+
+```{r Self harm scatter plot - STP, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio("self_harm_count_sum", "self_harm_denom_sum", "self_harm_value",
+                       "self_harm_ratio", "n_self_harm",
+                       "Self-harm in CYP - Need:demand ratio")
+```
+
+```{r Self harm scatter plot - CCG, echo = FALSE, message = FALSE, warning = FALSE}
+scatter_function_ratio_ccg("self_harm_count_sum", "self_harm_denom_sum", "self_harm_value",
+                           "self_harm_ratio", "n_self_harm",
+                           "Self-harm in CYP - Need:demand ratio")
+```
+
+

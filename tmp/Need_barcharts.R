@@ -131,7 +131,7 @@ sub_data <-
 STP_need_demand %>%
   select(1:3, indicator) %>%
   rename(ratio = indicator) %>%
-  mutate(stp20nm = fct_reorder(stp20nm.x, ratio)) %>%
+  mutate(stp20nm = fct_reorder(stp20nm, ratio)) %>%
   drop_na(ratio) %>%
   mutate(mean = mean(ratio))
 
@@ -150,7 +150,9 @@ sub_data %>%
            "")
   }) +
   theme(axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1),
-        legend.position = "none") +
+        legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
   labs(title = title, #indicator_name
        subtitle = "Children and Young People's (CYP) mental health. STP, 2019",
        x = "STP Name",
@@ -189,7 +191,9 @@ demand_ratio_ccg <- function(indicator, title) {
              "")
     }) +
     theme(axis.text.x = element_text(size = 10, angle = 90, vjust = 0.5, hjust=1),
-          legend.position = "none") +
+          legend.position = "none",
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
     labs(title = title, #indicator_name
          subtitle = "Children and Young People's (CYP) mental health. STP, 2019",
          x = "CCG Name",
@@ -202,5 +206,6 @@ demand_ratio_ccg("emot_dis_ratio", "Emotional disorders - Need:demand ratio")
 demand_ratio_ccg("cond_ratio", "Conduct disorders - Need:demand ratio")
 demand_ratio_ccg("hyperkin_ratio", "Hyperkinetic disorders - Need:demand ratio")
 demand_ratio_ccg("self_harm_ratio", "Self harm - Need:demand ratio")
+
 
 
