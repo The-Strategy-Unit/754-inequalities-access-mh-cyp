@@ -228,9 +228,14 @@ list(
   ),
 
   tar_target(
+    report_modelling_results_file,
+    "reports/modelling_results.Rmd",
+    format = "file"
+  ),
+  tar_target(
     report_modelling_results,
     rmarkdown::render(
-      "reports/modelling_results.Rmd",
+      report_modelling_results_file,
       params = list(
         response    = cypmh_logistic_baked$test$util_description,
         lrg_model   = cypmh_model_logistic_regression,
