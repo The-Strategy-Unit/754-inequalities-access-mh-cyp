@@ -1,0 +1,193 @@
+---
+title: "Modelling Results"
+author: "The Strategy Unit"
+date: "20/05/2021"
+output: html_document
+params:
+  response:    NULL
+  lrg_model:   NULL
+  xgb_model:   NULL
+  mlp_model:   NULL
+  lrg_results: NULL
+  xgb_results: NULL
+  mlp_results: NULL
+  cypmh_cols:  NULL
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(caret)
+  library(ROCR)
+  library(broom)
+  library(xgboost)
+})
+```
+
+```{r load missing data (interactive), include=FALSE}
+# for interactive use, load the values that will usually be passed in by targets
+if (is.null(params$cypmh_train)) {
+  response    <- tar_read(cypmh_logistic_baked)$test$util_description
+  lrg_model   <- tar_read(cypmh_model_logistic_regression)
+  xgb_model   <- tar_read(cypmh_model_xgboost_logistic)
+  # not actually using this, save loading keras/tensorflow
+  # mlp_model   <- tar_read(cypmh_model_mlp_logistic)
+  lrg_results <- tar_read(cypmh_model_logistic_regression_p)
+  xgb_results <- tar_read(cypmh_model_mlp_logistic_p)
+  mlp_results <- tar_read(cypmh_model_xgboost_logistic_p)
+  
+  cypmh_cols <- tar_read(cypmh_baked)$train %>%
+    select(-util_description) %>%
+    colnames() %>%
+    sort(TRUE)
+} else {
+  response    <- params$response
+  lrg_model   <- params$lrg_model
+  xgb_model   <- params$xgb_model
+  mlp_model   <- params$mlp_model
+  lrg_results <- params$lrg_results
+  xgb_results <- params$xgb_results
+  mlp_results <- params$mlp_results
+  
+  cypmh_cols  <- params$cypmh_cols
+}
+```
+
+```{r logistic confusion matrix}
+logistic_cm <- function(p, r, measure) {
+  pred <- prediction(p, r)
+  perf <- performance(pred, measure)
+    
+  cutoff <- perf@x.values[[1]][[which.max(perf@y.values[[1]])]]
+  
+  logistic_factor <- function(x) {
+    factor(x, levels = c(FALSE, TRUE), labels = c("Infrequent", "Prolonged"))
+  }
+  
+  confusionMatrix(
+    logistic_factor(p > cutoff),
+    logistic_factor(r),
+    positive = "Prolonged"
+  )
+}
+
+cm_f1 <- list(
+  "Logistic Regression" = lrg_results,
+  "XGBoost" = xgb_results,
+  "Neural Network" = mlp_results
+) %>%
+  map(logistic_cm, response, "f")
+```
+## Model Results
+
+```{r overall results}
+inner_join(
+  map_dfr(cm_f1, "overall", .id = "model") %>%
+    select(model, Accuracy, Kappa),
+  
+  map_dfr(cm_f1, "byClass", .id = "model") %>%
+    select(model, Sensitivity, Specificity, F1, `Balanced Accuracy`),
+  by = "model"
+) %>%
+  arrange(desc(F1))
+```
+
+## Confusion Matrices
+
+```{r confusion matrix plot}
+cm_f1 %>%
+  map("table") %>%
+  map_dfr(as_tibble, .id = "model") %>%
+  mutate(across(Prediction, fct_rev)) %>%
+  ggplot(aes(Reference, Prediction)) +
+  geom_tile(aes(fill = n), show.legend = FALSE) +
+  geom_text(aes(label = n)) +
+  facet_wrap(vars(model)) +
+  coord_fixed() +
+  scale_fill_distiller(type = "div", palette = "RdYlGn") +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks = element_blank())
+```
+
+## Feature Importance
+
+```{r feature importance}
+importance_plot <- function(x) {
+  x$feature_group <- cypmh_cols[
+    map(cypmh_cols, ~str_starts(x$term, .x)) %>%
+      transpose() %>%
+      map_dbl(compose(min, which, flatten_lgl))
+  ]
+  
+  x %>%
+    mutate(across(term, fct_reorder, estimate),
+           across(feature_group, fct_recode,
+                  "opa" = "opa_dna",
+                  "opa" = "opa_consultant",
+                  "activity" = "spell_days",
+                  "activity" = "nel_spells",
+                  "activity" = "el_spells",
+                  "activity" = "admissions",
+                  "activity" = "ae_attends",
+                  "activity" = "bed_days_ms",
+                  "activity" = "bed_days_intensive",
+                  "activity" = "days_detention",
+                  "demographics" = "ethnicity",
+                  "demographics" = "is_male",
+                  "demographics" = "age",
+                  "demographics" = "age_first_contact",
+                  "demographics" = "imd",
+                  "demographics" = "social_worker",
+                  "demographics" = "has_diagnosis")) %>%
+    ggplot(aes(estimate, term, fill = estimate)) +
+    geom_col(show.legend = FALSE) +
+    geom_vline(xintercept = 0, colour = "grey92") +
+    scale_fill_distiller(type = "div", palette = "Spectral") +
+    theme_minimal() +
+    theme(panel.grid = element_blank(),
+          axis.title = element_blank(),
+          axis.text = element_text(size = 8)) +
+    facet_wrap(vars(feature_group), scales = "free_y")
+}
+```
+
+### XGBoost
+
+```{r feature importance xgb}
+xgb.importance(model = xgb_model) %>%
+  as_tibble() %>%
+  select(term = Feature, estimate = Gain) %>%
+  importance_plot()
+xgb.importance(model = xgb_model) %>%
+  as_tibble() %>%
+  select(term = Feature, estimate = Cover) %>%
+  importance_plot()
+xgb.importance(model = xgb_model) %>%
+  as_tibble() %>%
+  select(term = Feature, estimate = Frequency) %>%
+  importance_plot()
+```
+
+### Logistic Regression
+
+```{r feature importance logistic regression}
+tidy(lrg_model) %>%
+  dplyr::slice(-1) %>%
+  select(term, estimate) %>%
+  importance_plot()
+```
+
+## Combined Confussion Matrix
+
+```{r}
+logistic_cm(
+  (lrg_results + xgb_results[,1] + mlp_results) / 3,
+  response,
+  "f"
+)
+```
