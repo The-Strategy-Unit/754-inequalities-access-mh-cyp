@@ -12,7 +12,7 @@ cypmh_model_run_svm(cypmh, kernel)
 \item{kernel}{the kernel type to use with svm}
 }
 \value{
-a list containing the model, the confusion matrix on the test data, and the recipe used
+the model
 }
 \description{
 Runs an svm model on the CYPMH data
