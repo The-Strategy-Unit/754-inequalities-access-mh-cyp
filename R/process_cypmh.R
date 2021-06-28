@@ -4,6 +4,7 @@
 #'
 #' @param raw_cypmh results from get_cypmh
 #' @param imd tibble containing columns lsoa and imd
+#' @param lsoa_01_to_stp tibble containing columns lsoa, and stp
 #' @param ethnicity tibble containing columns ethnic_code and ethnicity, to remap
 #' @param source_referral tibble containing columns source_ref_code and source_referral, to remap
 #'
@@ -12,6 +13,7 @@
 #' @export
 process_cypmh <- function(raw_cypmh,
                           imd,
+                          lsoa_01_to_stp,
                           ethnicity,
                           source_referral) {
   df <- raw_cypmh %>%
@@ -35,11 +37,15 @@ process_cypmh <- function(raw_cypmh,
       dplyr::across(c(.data$ethnic_code, .data$employment_status), stringr::str_sub, 1, 1),
       dplyr::across(.data$accomodation_status, ~ifelse(.x == "OC", "99", .x))
     ) %>%
-    dplyr::inner_join(imd, by = "lsoa") %>%
+    dplyr::left_join(imd, by = "lsoa") %>%
+    dplyr::left_join(lsoa_01_to_stp, by = "lsoa") %>%
+    dplyr::mutate(dplyr::across(stp, tidyr::replace_na, "E54000000"),
+                  dplyr::across(imd, tidyr::replace_na, 0)) %>%
     dplyr::left_join(ethnicity, by = "ethnic_code") %>%
     dplyr::left_join(source_referral, by = "source_ref_code") %>%
     dplyr::select(-.data$lsoa, -.data$ethnic_code, -.data$source_ref_code, -.data$util_class) %>%
-    dplyr::mutate(dplyr::across(ethnicity, tidyr::replace_na, "Unknown"))
+    dplyr::mutate(dplyr::across(ethnicity, tidyr::replace_na, "Unknown"),
+                  dplyr::across(.data$imd, as.factor))
 
   split <- sample(1:3, nrow(df), TRUE, c(.6, .2, .2))
 
