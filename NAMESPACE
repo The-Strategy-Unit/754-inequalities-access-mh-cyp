@@ -3,7 +3,6 @@
 export(check_for_issues)
 export(cypmh_model_run_mlp)
 export(cypmh_model_run_mlp_logistic)
-export(cypmh_model_run_svm)
 export(cypmh_model_run_xgboost)
 export(cypmh_model_run_xgboost_logistic)
 export(get_ccg_gss_to_ods)

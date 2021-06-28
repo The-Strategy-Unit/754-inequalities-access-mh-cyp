@@ -149,22 +149,6 @@ list(
       newdata = cypmh_baked$test
     )
   ),
-  ### svm ----
-  # linear kernel performed best, ignoring the other types
-  # tar_target(
-  #   cypmh_model_svm_linear,
-  #   cypmh_model_run_svm(
-  #     cypmh_dummy_baked$train,
-  #     "linear"
-  #   )
-  # ),
-  # tar_target(
-  #   cypmh_model_svm_linear_p,
-  #   stats::predict(
-  #     cypmh_model_svm_linear,
-  #     newdata = cypmh_dummy_baked$test
-  #   )
-  # ),
   ### mlp ----
   tar_target(
     cypmh_model_mlp,
