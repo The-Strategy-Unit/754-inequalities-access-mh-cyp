@@ -7,15 +7,16 @@
 #' @export
 get_imd <- function() {
   url <- paste("https://assets.publishing.service.gov.uk/government",
-               "uploads/system/uploads/attachment_data/file/467764",
-               "File_1_ID_2015_Index_of_Multiple_Deprivation.xlsx",
+               "uploads/system/uploads/attachment_data/file/6872",
+               "1871524.xls",
                sep = "/")
 
-  withr::local_file("imd.xlsx", {
-    utils::download.file(url, "imd.xlsx", mode = "wb")
+  withr::local_file("imd.xls", {
+    utils::download.file(url, "imd.xls", mode = "wb")
 
-    imd <- readxl::read_excel("imd.xlsx", sheet = "IMD 2015") %>%
-      dplyr::select(lsoa = 1, imd = 6)
+    imd <- readxl::read_excel("imd.xls", sheet = "IMD 2010") %>%
+      dplyr::select(lsoa = 1, imd = 7) %>%
+      dplyr::mutate(dplyr::across(imd, dplyr::ntile, 10))
   })
 
   imd
