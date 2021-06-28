@@ -48,7 +48,10 @@ Imports:
     stats,
     caret,
     parallelSVM,
-    scales
+    scales,
+    keras,
+    xgboost,
+    ROCR
 Suggests:
     targets
 Remotes:
