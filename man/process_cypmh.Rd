@@ -4,12 +4,14 @@
 \alias{process_cypmh}
 \title{Process CYPMH}
 \usage{
-process_cypmh(raw_cypmh, imd, ethnicity, source_referral)
+process_cypmh(raw_cypmh, imd, lsoa_01_to_stp, ethnicity, source_referral)
 }
 \arguments{
 \item{raw_cypmh}{results from get_cypmh}
 
 \item{imd}{tibble containing columns lsoa and imd}
+
+\item{lsoa_01_to_stp}{tibble containing columns lsoa, and stp}
 
 \item{ethnicity}{tibble containing columns ethnic_code and ethnicity, to remap}
 
