@@ -2,7 +2,8 @@
 title: "Modelling Results"
 author: "The Strategy Unit"
 date: "20/05/2021"
-output: html_document
+output: StrategyUnitTheme::su_document
+bibliography: modelling_results.bibtex
 params:
   response:    NULL
   lrg_model:   NULL
@@ -15,8 +16,10 @@ params:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = here::here())
+
+# handles https://github.com/r-lib/crayon/issues/96
+options(crayon.enabled = NULL)
 
 suppressPackageStartupMessages({
   library(tidyverse)
@@ -26,6 +29,31 @@ suppressPackageStartupMessages({
   library(broom)
   library(xgboost)
 })
+
+# set default options
+ragg_png = function(..., res = 300) {
+  ragg::agg_png(..., res = res, units = "in")
+}
+
+knitr::opts_chunk$set(
+  dev = "ragg_png",
+  fig.ext = "png",
+  echo = FALSE
+)
+
+# if you want to use the Strategy Unit Theme colours change the variable below
+# to true
+use_su_theme_colours <- FALSE
+
+if (use_su_theme_colours) {
+  scale_fill_continuous <- partial(scale_fill_su, discrete = FALSE)
+  scale_fill_discrete <- partial(scale_fill_su, discrete = TRUE)
+  scale_colour_continuous <- partial(scale_colour_su, discrete = FALSE)
+  scale_colour_discrete <- partial(scale_colour_su, discrete = TRUE)
+
+  scale_color_continuous <- scale_colour_continuous
+  scale_color_discrete <- scale_colour_discrete
+}
 ```
 
 ```{r load missing data (interactive), include=FALSE}
@@ -57,64 +85,6 @@ if (is.null(params$cypmh_train)) {
 }
 ```
 
-```{r logistic confusion matrix}
-logistic_cm <- function(p, r, measure) {
-  pred <- prediction(p, r)
-  perf <- performance(pred, measure)
-    
-  cutoff <- perf@x.values[[1]][[which.max(perf@y.values[[1]])]]
-  
-  logistic_factor <- function(x) {
-    factor(x, levels = c(FALSE, TRUE), labels = c("Infrequent", "Prolonged"))
-  }
-  
-  confusionMatrix(
-    logistic_factor(p > cutoff),
-    logistic_factor(r),
-    positive = "Prolonged"
-  )
-}
-
-cm_f1 <- list(
-  "Logistic Regression" = lrg_results,
-  "XGBoost" = xgb_results,
-  "Neural Network" = mlp_results
-) %>%
-  map(logistic_cm, response, "f")
-```
-## Model Results
-
-```{r overall results}
-inner_join(
-  map_dfr(cm_f1, "overall", .id = "model") %>%
-    select(model, Accuracy, Kappa),
-  
-  map_dfr(cm_f1, "byClass", .id = "model") %>%
-    select(model, Sensitivity, Specificity, F1, `Balanced Accuracy`),
-  by = "model"
-) %>%
-  arrange(desc(F1))
-```
-
-## Confusion Matrices
-
-```{r confusion matrix plot}
-cm_f1 %>%
-  map("table") %>%
-  map_dfr(as_tibble, .id = "model") %>%
-  mutate(across(Prediction, fct_rev)) %>%
-  ggplot(aes(Reference, Prediction)) +
-  geom_tile(aes(fill = n), show.legend = FALSE) +
-  geom_text(aes(label = n)) +
-  facet_wrap(vars(model)) +
-  coord_fixed() +
-  scale_fill_distiller(type = "div", palette = "RdYlGn") +
-  theme(panel.background = element_blank(),
-        panel.grid = element_blank(),
-        axis.ticks = element_blank())
-```
-
-## Feature Importance
 
 ```{r feature importance}
 importance_plot <- function(x) {
@@ -156,38 +126,191 @@ importance_plot <- function(x) {
 }
 ```
 
+We explored the Mental Health Minimum Data Set (MHMDS) to see if we could build a model that could predict the needs in
+10 years time for 17-24 year old patients from 2008/09.
+
+The data was extracted from HES [@hes].
+
+| Initial row count                   |  ~128,000   |
+| :---------------------------------- | ----------: |
+| Excluded due to Data Quality        |   ~5,000    |
+| Removed due to "death in follow up" |   ~2,370    |
+| Removed as no recorded gender       |       250   |
+| **Final row count**                 | **120,267** |
+
+Table: Table 1: Row Count
+
+We split the data (roughly 60/20/20) into training, test, and validation data sets as per best practice with Machine
+Learning [@shah_2020].
+
+| Data Set   | Percent | Count  |
+| :--------- | ------: | -----: |
+| Train      | ~60%    | 72,119 |
+| Test       | ~20%    | 23,904 |
+| Validation | ~20%    | 24,244 |
+
+Table: Table 2: Data split
+
+There are multiple datasets used from HES:
+
+* MHMDS for the 2008/09 period
+* MHSDS [@mhsds] for 2009/10 to 2019/20
+
+These datasets are significantly different.
+
+The data from the earlier MH dataset had issues, both in terms of data quality and structure. Many fields were
+incomplete, so have had to be ignored (such as Source of Referral).
+
+The MHMDS was a financial year (April through March) snapshot, with one row per patient if they at least one bit of
+activity in the year. Therefore, fields such as number of days of activity reflect what happened in that period. This
+leads to issues, as someone with "1 bed day" may be because they spent 1 day admitted, or because they were admitted on
+the last day in the period (31^st^ March) or discharged on the first day (1^st^ April). If someone spent the entire year
+in hospital they would have a value of 365 days.
+
+Some potential fields don’t have corresponding data items in the newer dataset, so have been ignored. This is because in
+order for the model to be of use for new data we need to be able to provide values for all of the fields we used when
+training the model.
+
+We performed feature engingeering [@brownlee_2020] on the data in order to help the machine learning algorithms
+work more effectively.
+
+* The diagnosis field was not always (in fact, not often) recorded. Instead of using the ICD-10 diagnosis code we turned
+this into a binary "yes"/"no" field (does this patient have a diagnosis?)
+* The "spell days" field was split into groups of 0, 1-41, 42-127, 128-364 or 365
+* The admissions, elective spells and non-elective spells were split into groups of 0, 1 or 2+
+* The Outpatient attendance and Outpatient DNA fields were split into groups of 0, 1-2 or 3+
+* The A&E attends field was split into 0, 1-9 and 10+
+* The bed days and days detention field as turned into a binary "yes"/"no" field
+* The IMD was regrouped from deciles to quintiles
+
+We created two outcome categories based on how much activity individuals had in the following 10 years from the baseline
+period. We counted the years that they had activity in, and if they had activity in 0-4 years we classed these as being
+"infrequent contact", and those that had activity in 5-10 years as "prolonged contact".
+
+We trained a number of different machine learning algorithms on this data to try to predict this outcome classification.
+The algorithms used were:
+
+* Logistic Regression [@swaminathan_2019]
+* XGBoost [@xgboost]
+* Neural Network [@hardesty_2017]
+
+
+```{r logistic confusion matrix}
+logistic_cm <- function(p, r, measure) {
+  pred <- prediction(p, r)
+  perf <- performance(pred, measure)
+    
+  cutoff <- perf@x.values[[1]][[which.max(perf@y.values[[1]])]]
+  
+  logistic_factor <- function(x) {
+    factor(x, levels = c(FALSE, TRUE), labels = c("Infrequent", "Prolonged"))
+  }
+  
+  confusionMatrix(
+    logistic_factor(p > cutoff),
+    logistic_factor(r),
+    positive = "Prolonged"
+  )
+}
+
+cm_f1 <- list(
+  "Logistic Regression" = lrg_results,
+  "XGBoost" = xgb_results,
+  "Neural Network" = mlp_results
+) %>%
+  map(logistic_cm, response, "f")
+```
+
+## Model Results
+
+The results of the models are shown below.
+
+```{r overall results}
+inner_join(
+  map_dfr(cm_f1, "overall", .id = "model") %>%
+    select(model, Accuracy, Kappa),
+  
+  map_dfr(cm_f1, "byClass", .id = "model") %>%
+    select(model, Sensitivity, Specificity, F1, `Balanced Accuracy`),
+  by = "model"
+) %>%
+  arrange(desc(F1)) %>%
+  knitr::kable(digits = 3,
+               caption = "Table 3: Model Results")
+```
+
+Accuracy compares the predicted classes against the actual classes and counts the percentage of records which are
+correctly predicted. This isn’t necessarily the best method as we have far more individuals in the “infrequent” class
+than the “prolonged” class. Therefore, we are better off looking at the F1 scores and the Balanced Accuracy.
+
+The individual class results are shown in the confusion matrices below.
+
+```{r confusion matrix plot, fig.cap = "Confusion Matrices"}
+cm_f1 %>%
+  map("table") %>%
+  map_dfr(as_tibble, .id = "model") %>%
+  mutate(across(Prediction, fct_rev)) %>%
+  ggplot(aes(Reference, Prediction)) +
+  geom_tile(aes(fill = n), show.legend = FALSE) +
+  geom_text(aes(label = n)) +
+  facet_wrap(vars(model)) +
+  coord_fixed() +
+  scale_fill_distiller(type = "div", palette = "RdYlGn") +
+  theme(panel.background = element_blank(),
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank(),
+        strip.background = element_blank())
+```
+
+We can see from the confusion matrices that the xgboost algorithm is the best performing model at predicting the
+“prolonged contact” class and incorrectly predicts the “infrequent contact” class the least. However, Logistic
+Regression does not perform much worse than the other two methods, and it is by far the most explainable model used.
+
+As Neural Networks do not easily explain why someone is predicted in one class or the other, and it does not outperform
+the other methods we ignore it from this point on.
+
 ### XGBoost
 
-```{r feature importance xgb}
+The importance of each feature in the xgboost model is shown in the plot below. The x-axis shows the "gain" each feature
+adds to the model.
+
+```{r feature importance xgb, fig.cap = "xgboost feature importance"}
 xgb.importance(model = xgb_model) %>%
   as_tibble() %>%
   select(term = Feature, estimate = Gain) %>%
   importance_plot()
-xgb.importance(model = xgb_model) %>%
-  as_tibble() %>%
-  select(term = Feature, estimate = Cover) %>%
-  importance_plot()
-xgb.importance(model = xgb_model) %>%
-  as_tibble() %>%
-  select(term = Feature, estimate = Frequency) %>%
-  importance_plot()
 ```
+
+The xgboost model finds that the spell days field having a value of 365 days leads to the greatest gain to model
+accuracy. Other fields are harder to interpret. 
 
 ### Logistic Regression
 
-```{r feature importance logistic regression}
+The importance of each feature in the logistic regression model is shown in the plot below. The x-axis shows the
+coefficient for each feature, with a negative value indicating that this field causes someone to more likely be in the
+"infrequent contact" group, and a positive value indicating that this field causes someone to more likely be in the
+"prolonged contact" group.
+
+```{r feature importance logistic regression, fig.cap = "logistic regression feature coefficients"}
 tidy(lrg_model) %>%
   dplyr::slice(-1) %>%
   select(term, estimate) %>%
   importance_plot()
 ```
 
-## Combined Confussion Matrix
+From the activity we can see that if a patient has more activity, or has some of the more intensive forms of activity,
+they are far more likely to be "prolonged contact".
 
-```{r}
-logistic_cm(
-  (lrg_results + xgb_results[,1] + mlp_results) / 3,
-  response,
-  "f"
-)
-```
+With the STP's we see a great difference between the different areas of the country. This may indicate differences in
+the services provided, or could be indicative of differences in data quality or data recording. We cannot make any
+conclusions from this data alone.
+
+From the demographics we can see that having a social worker or having a diagnosis are the two most important features
+in predicting "prolonged contact". There is a linear trend from the most deprived (imd1) to least (imd5), with the most
+deprived being pulled more towards "prolonged contact".
+
+Ethnicity coding is an obvious issue - the "Unknown" group is more likely to be "infrequent contact". The "black", 
+"mixed" and "asian" ethnic groups are more likely to have "prolonged contact" than the reference ("white") group.
+
+# References
