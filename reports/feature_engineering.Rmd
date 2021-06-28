@@ -1,0 +1,463 @@
+---
+title: "Feature Engineering"
+author: "The Strategy Unit"
+date: "05/05/2021"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = here::here())
+
+library(tidyverse)
+library(targets)
+library(ggcorrplot)
+library(recipes)
+library(shiny)
+library(caret)
+library(ROCR)
+library(plotly, exclude = c("last_plot", "filter", "layout"))
+```
+
+```{r load data}
+cypmh <- tar_read(cypmh)$train
+
+theme_set(
+  theme_minimal() %+replace%
+  theme(panel.grid = element_blank(),
+        axis.line = element_line(colour = "grey92"))
+)
+```
+
+## Correlation plot
+
+```{r correlation plot}
+ggplotly(
+  cypmh %>%
+    select(where(is.numeric), -is_male) %>%
+    cor() %>%
+    ggcorrplot() +
+    theme(legend.position = "none",
+          axis.text.x = element_text(angle = 30, size = 6),
+          axis.text.y = element_text(angle =  0, size = 6))
+)
+```
+
+# Exploring columns
+
+## Spell Days
+
+There are two stand out groups: those who have a value of 1 for `spell_days` and those who have a value of 365. In other
+words, the two most common values are either they had a single interaction with MH services, or were under the care for
+the entire extract.
+
+```{r spell days}
+cypmh %>%
+  count(spell_days) %>%
+  ggplot(aes(spell_days, n)) +
+  geom_point(shape = "circle filled")
+```
+
+We can create a cut function to break up spell days into groups that equally split inbetween 1 and 365.
+
+```{r spell days cut}
+spell_days_cut <- local({
+  breaks <- c(1, cypmh %>%
+    filter(spell_days > 1, spell_days < 365) %>%
+    summarise(across(spell_days, quantile, c(0.33, 0.66))) %>%
+    pull(spell_days) %>%
+    unname(), 364)
+  
+  labels <- c("1", paste(breaks[-4] + 1, "-", breaks[-1], sep = ""), "365")
+  
+  purrr::partial(
+    cut,
+    breaks = c(0, breaks, 365),
+    labels = labels
+  )
+})
+
+cypmh %>%
+  mutate(across(spell_days, spell_days_cut)) %>%
+  count(spell_days) %>%
+  mutate(pcnt = scales::percent(n / sum(n)))
+```
+
+## Bed Days
+
+Bed days should be a subset of spell days. The correlation between the two columns is quite high
+(`r cor(cypmh$spell_days, cypmh$bed_days)`) so it will be worth dropping this column.
+
+There are two more bed days columns, these are not particularly well correlated with spell days or each other, so worth
+including in the model.
+
+```{r correlation bed days}
+cor(cypmh[,c("spell_days", "bed_days_ms", "bed_days_intensive")])
+```
+
+### Bed Days MS
+
+Most of the rows are 0, so there probably isn't much use in including the actual values, or the column at all.
+
+`r scales::percent(sum(cypmh$bed_days_ms != 0) / nrow(cypmh), accuracy = 0.01)` of the rows contain a value other than
+0.
+
+### Bed Days Intensive
+
+Most of the rows are 0, so there probably isn't much use in including the actual values, or the column at all.
+
+`r scales::percent(sum(cypmh$bed_days_intensive != 0) / nrow(cypmh), accuracy = 0.01)` of the rows contain a value other
+than 0.
+
+## CPA days
+
+Most records have a 0 for the `cpa_*_days` columns. We should discretise the columns into none/low/medium/high/very high
+groups.
+
+```{r cpa days cut}
+cpa_cut <- purrr::partial(
+  cut,
+  breaks = c(-Inf, 0, 28, 91, 203, 365),
+  labels = c("None", "Low", "Medium", "High", "Very High")
+)
+
+cypmh %>%
+  select(cpa_standard_days, cpa_enhanced_days) %>%
+  pivot_longer(everything()) %>%
+  mutate(across(value, cpa_cut)) %>%
+  group_by(name) %>%
+  count(value) %>%
+  mutate(n = scales::percent(n / sum(n))) %>%
+  pivot_wider(names_from = name, values_from = n)
+```
+
+## CPA reviews
+
+~50% of people don't have CPA reviews, ~25% have 1 review, the remained have more than 1. Some have 100+, but we reach
+99% by 19 reviews.
+
+```{r cpa review cut}
+cpa_review_cut <- purrr::partial(
+  cut,
+  breaks = c(-Inf, 0, 1, Inf),
+  labels = c("None", "One", "Multiple")
+)
+
+cypmh %>%
+  count(reviews = cpa_review_cut(cpa_reviews)) %>%
+  mutate(p = n / sum(n))
+```
+
+## Days Detention
+
+Most records have a value for `days_detention` of 0 (`r scales::percent(sum(cypmh$days_detention == 0) / nrow(cypmh))`).
+Therefore we will turn this column into a binary measure (`days_detention > 0`)
+
+## OPA Consultant
+
+```{r opa consultant stats}
+opac <- cypmh %>%
+  count(opa_consultant) %>%
+  mutate(p = n / sum(n))
+
+opac_pz <- scales::percent(opac$p[[1]], accuracy = 0.1)
+opac_pl <- scales::percent(sum(opac$p[2:3]), accuracy = 0.1)
+opac_ph <- scales::percent(sum(opac$p[-(1:3)]), accuracy = 0.10)
+```
+
+Most people don't have an appointment with a consultant (`r opac_pz`). Then, `r opac_pl` have 1 or 2 appointments, and
+`r opac_ph` have 3 or more appointments.
+
+## OPA DNA
+
+```{r opa dna}
+opad <- cypmh %>%
+  count(opa_dna) %>%
+  mutate(p = n / sum(n))
+
+opad_pz <- scales::percent(opad$p[[1]], accuracy = 0.1)
+opad_pl <- scales::percent(sum(opad$p[2:3]), accuracy = 0.1)
+opad_ph <- scales::percent(sum(opad$p[-(1:3)]), accuracy = 0.10)
+```
+
+Most people don't have any DNA's (`r opad_pz`). Then, `r opad_pl` have 1 or 2 DNA's, and `r opad_ph` have 3 or more
+DNA's.
+
+## Contact Community Psychiatric Nurse
+
+```{r con_community_psychiatric_nurse}
+cypmh %>%
+  count(con_community_psychiatric_nurse) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+We can split this column into 3 groups:
+
+* Zero contacts
+* 1-4 contacts
+* 5+ contacts
+
+## Contact Clinical Psychologist
+
+```{r con_clinical_pschologist}
+cypmh %>%
+  count(con_clinical_psychologist) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+We can split this column into 3 groups:
+
+* Zero contacts
+* 1-4 contacts
+* 5+ contacts
+
+## Contact Occupational Therapist
+
+```{r con_occupational_therapist}
+cypmh %>%
+  count(con_occupational_therapist) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+We can split this column into 3 groups:
+
+* Zero contacts
+* 1-4 contacts
+* 5+ contacts
+
+## Contact Physiotherapist
+
+```{r con_physiotherapist}
+cypmh %>%
+  count(con_physiotherapist) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+Almost all rows have no contacts - this column should be dropped.
+
+## Contact Consultant Pscycotherapy
+
+```{r con_consultant_pscycotherapy}
+cypmh %>%
+  count(con_consultant_pscycotherapy) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+Most rows have no contacts, so convert to a binary value.
+
+## Contact Social Worker
+
+```{r con_contacts_social_worker}
+cypmh %>%
+  count(con_contacts_social_worker) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(6)
+```
+
+We can split this column into 3 groups:
+
+* Zero contacts
+* 1-4 contacts
+* 5+ contacts
+
+## Admissions
+
+```{r admissions}
+cypmh %>%
+  count(admissions) %>%
+  mutate(p = n / sum(n), c = cumsum(p)) %>%
+  head(2)
+```
+
+We can split this column into 3 groups:
+
+* Zero admissions
+* One admission
+* Multiple admissions
+
+## Days prior
+
+This field has some strange values, (max = `r max(cypmh$days_prior)`), so we will drop this column.
+
+## Age First Contact
+
+Some values are greater than the `age` column, so we will take the minimum of the `age` and the `age_first_contact`
+fields.
+
+## Elective Spells
+
+```{r elective spells}
+cypmh %>%
+  mutate(across(el_spells, ~.x == 0)) %>%
+  with(table(el_spells, util_description)) %>%
+  apply(2, function(x) x / sum(x))
+```
+
+Converting elective spells to a binary indicator gives good separations between the lower two classes and the upper two.
+
+## Non-Elective Spells
+
+```{r non-elective spells}
+cypmh %>%
+  mutate(across(nel_spells, ~.x == 0)) %>%
+  with(table(nel_spells, util_description)) %>%
+  apply(2, function(x) x / sum(x))
+```
+
+Converting non-elective spells to binary indicator gives good separations between the lower two classes and the upper
+two.
+
+## A&E Attends
+
+```{r non-ae_attends spells}
+cypmh %>%
+  mutate(across(ae_attends, cut, c(-Inf, 0, 1, 10, Inf))) %>%
+  with(table(ae_attends, util_description)) %>%
+  apply(2, function(x) x / sum(x))
+```
+
+We can split this column into 4 groups:
+
+* zero attendances
+* one attendance
+* two to nine attendances
+* ten or more attendances
+
+# Recipe
+
+```{r recipe}
+rec <- recipe(util_description ~ ., cypmh) %>%
+  step_cut(spell_days, breaks = c(0, 1, 42, 128, 364, 365)) %>%
+  step_cut(matches("cpa_.*_days"), breaks = c(-Inf, 0, 28, 91, 203, 365)) %>%
+  step_cut(cpa_reviews,
+           admissions,
+           el_spells,
+           nel_spells,
+           breaks = c(-Inf, 0, 1, Inf)) %>%
+  step_cut(starts_with("opa_"), breaks = c(-Inf, 0, 2, Inf)) %>%
+  step_cut(con_community_psychiatric_nurse,
+           con_clinical_psychologist,
+           con_occupational_therapist,
+           con_contacts_social_worker,
+           breaks = c(-Inf, 0, 4, Inf)) %>%
+  step_cut(ae_attends, breaks = c(-Inf, 0, 1, 10, Inf)) %>%
+  step_select(-bed_days,
+              -starts_with("contact_"),
+              -source_referral,
+              -marital_status,
+              -employment_status,
+              -accomodation_status,
+              -con_physiotherapist,
+              -days_prior) %>%
+  step_mutate_at(starts_with("bed_days_"),
+                 days_detention,
+                 con_consultant_pscycotherapy,
+                 fn = ~.x > 0) %>%
+  step_mutate_at(age_first_contact, fn = ~pmin(age_first_contact, age)) %>%
+  step_mutate_at(imd,
+                 fn = ~fct_recode(.x,
+                                  "1" = "1", 
+                                  "1" = "2", 
+                                  "2" = "3", 
+                                  "2" = "4", 
+                                  "3" = "5", 
+                                  "3" = "6", 
+                                  "4" = "7", 
+                                  "4" = "8", 
+                                  "5" = "9", 
+                                  "5" = "10")) %>%
+  step_mutate_at(util_description, fn = ~!.x %in% c("Low needs", "Occasional support")) %>%
+  step_mutate_at(ethnicity, fn = ~fct_relevel(.x, "White"))
+
+rec_prep <- prep(rec)
+
+cx <- bake(rec_prep, cypmh)
+cy <- bake(rec_prep, tar_read(cypmh)$test)
+glimpse(cx)
+```
+
+# Modelling
+
+```{r logistic regression}
+m <- glm(util_description ~ ., binomial, cx)
+p <- predict(m, cy) %>% scales::rescale()
+
+pred <- prediction(p, cy$util_description)
+
+max_cutoff <- function(.x) .x@x.values[[1]][[which.max(.x@y.values[[1]])]]
+
+acc_cutoff <- max_cutoff(performance(pred, "acc"))
+prbe_cutoff <- max_cutoff(performance(pred, "prbe"))
+
+sliderInput("cutoff",
+            "Cutoff",
+            min = 0, max = 1, value = acc_cutoff, step = 0.0001)
+
+actionButton("set_cutoff_acc", "Cutoff: max acc")
+actionButton("set_cutoff_prbe", "Cutoff: prbe")
+
+observeEvent(input$set_cutoff_acc, {
+  updateSliderInput(inputId = "cutoff", value = acc_cutoff)
+})
+
+observeEvent(input$set_cutoff_prbe, {
+  updateSliderInput(inputId = "cutoff", value = prbe_cutoff)
+})
+
+reactive(
+  confusionMatrix(
+    factor(
+      p > input$cutoff,
+      labels = c("Low", "High")
+    ),
+    factor(
+      cy$util_description,
+      labels = c("Low", "High")
+    ),
+    positive = "High"
+  )
+)
+```
+
+```{r model importance}
+selectInput("show_terms",
+            "Terms",
+            c("All", cx %>%
+                select(-util_description) %>%
+                colnames() %>%
+                sort()))
+
+df <- m %>%
+  tidy() %>%
+  slice(-1) %>%
+  mutate(across(term, fct_reorder, estimate)) %>%
+  arrange(estimate)
+
+renderPlotly({
+  df_x_limits <- range(df$estimate)
+  
+  df$highlight <- df$estimate
+  
+  if (input$show_terms != "All") {
+    df[!str_starts(df$term, input$show_terms),]$highlight <- NA
+  }
+  
+  p <- df %>%
+    ggplot(aes(estimate, term, fill = highlight)) +
+    geom_col(colour = "grey20") +
+    geom_vline(xintercept = 0) +
+    scale_x_continuous(limits = df_x_limits) +
+    scale_fill_distiller(type = "div", palette = "Spectral", limits = df_x_limits) +
+    theme(axis.title = element_blank()) +
+    labs(x = "", y = "")
+  
+  ggplotly(p, height = 800)
+})
+```
+
